@@ -164,6 +164,8 @@ export function Workspace({
       (action.action === 'CREATE' || action.action === 'UPDATE' || action.action === 'DELETE') &&
       analysis ? (
         <PreviewCard
+          // A new proposal starts un-acknowledged, even if the card stays mounted.
+          key={analysis.requestId}
           action={action}
           candidates={analysis.candidates}
           conflicts={analysis.conflicts}

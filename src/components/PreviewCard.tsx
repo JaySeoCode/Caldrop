@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { formatEventRange } from '@/lib/util/datetime';
 import type { CalendarAction } from '@/schemas/calendar-action';
 import type { CalendarEvent } from '@/types';
@@ -23,6 +24,12 @@ const CONFIRM_LABEL: Record<string, string> = {
   DELETE: 'Delete Event',
 };
 
+/** Second-press label once the user has been shown an overlap. */
+const CONFIRM_ANYWAY_LABEL: Record<string, string> = {
+  CREATE: 'Add anyway',
+  UPDATE: 'Update anyway',
+};
+
 interface PreviewCardProps {
   action: CalendarAction;
   candidates: CalendarEvent[];
@@ -42,6 +49,11 @@ export function PreviewCard({
   onConfirm,
   onCancel,
 }: PreviewCardProps) {
+  // An overlap takes two presses: the first only arms the confirm button, so a
+  // double-booking is always a deliberate choice rather than a reflex tap.
+  const [overlapAcknowledged, setOverlapAcknowledged] = useState(false);
+  const needsOverlapAck = conflicts.length > 0 && !overlapAcknowledged;
+
   const target =
     action.targetEventId != null
       ? candidates.find((candidate) => candidate.id === action.targetEventId) ?? null
@@ -109,7 +121,12 @@ export function PreviewCard({
       ) : null}
 
       {conflicts.length > 0 ? (
-        <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div
+          className={`mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ${
+            overlapAcknowledged ? 'ring-2 ring-amber-400' : ''
+          }`}
+          role={overlapAcknowledged ? 'alert' : undefined}
+        >
           <p className="font-medium">
             {conflicts.length === 1 ? 'An event already' : `${conflicts.length} events already`} overlap
             this time:
@@ -121,6 +138,12 @@ export function PreviewCard({
               </li>
             ))}
           </ul>
+          {overlapAcknowledged ? (
+            <p className="mt-2 font-medium">
+              Press &ldquo;{CONFIRM_ANYWAY_LABEL[action.action] ?? 'Confirm anyway'}&rdquo; to keep
+              both events.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -131,10 +154,14 @@ export function PreviewCard({
         <button
           type="button"
           className={action.action === 'DELETE' ? 'btn-danger' : 'btn-primary'}
-          onClick={onConfirm}
+          onClick={needsOverlapAck ? () => setOverlapAcknowledged(true) : onConfirm}
           disabled={busy}
         >
-          {busy ? 'Working...' : CONFIRM_LABEL[action.action] ?? 'Confirm'}
+          {busy
+            ? 'Working...'
+            : overlapAcknowledged
+              ? CONFIRM_ANYWAY_LABEL[action.action] ?? 'Confirm anyway'
+              : CONFIRM_LABEL[action.action] ?? 'Confirm'}
         </button>
       </div>
     </div>
