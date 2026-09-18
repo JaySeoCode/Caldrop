@@ -132,19 +132,14 @@ export function InputCard({ busy, onAnalyze, initial }: InputCardProps) {
 
       {localError ? <p className="mt-3 text-sm text-red-600">{localError}</p> : null}
 
-      <div className="mt-4 flex items-center justify-between">
-        <span className="text-xs text-ink-faint">
-          {busy ? 'Understanding your schedule...' : 'Nothing is written until you confirm.'}
-        </span>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={!canSubmit}
-          onClick={() => onAnalyze({ text: text.trim() || undefined, image: image ?? undefined })}
-        >
-          {busy ? 'Analyzing...' : 'Analyze'}
-        </button>
-      </div>
+      <button
+        type="button"
+        className="btn-primary mt-4 w-full"
+        disabled={!canSubmit}
+        onClick={() => onAnalyze({ text: text.trim() || undefined, image: image ?? undefined })}
+      >
+        {busy ? 'Analyzing...' : 'Analyze'}
+      </button>
     </div>
   );
 }
