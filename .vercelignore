@@ -1,0 +1,7 @@
+# Secrets are configured as Vercel environment variables, never uploaded as files.
+.env
+.env.local
+.env*.local
+node_modules
+.next
+coverage

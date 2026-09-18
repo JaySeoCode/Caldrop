@@ -1,0 +1,5 @@
+# Keep LF in the repository regardless of the OS that checks it out.
+# The app builds on Linux (Vercel); mixed line endings only create noisy diffs.
+* text=auto eol=lf
+
+*.png binary
