@@ -28,16 +28,28 @@ async function parse<T>(response: Response): Promise<T> {
   return payload;
 }
 
+export interface ClarificationTurn {
+  question: string;
+  answer: string;
+}
+
 export async function analyze(input: {
   text?: string;
   image?: File;
-  clarification?: string;
+  /** Every clarification round so far for this input, oldest first. */
+  clarifications?: ClarificationTurn[];
+  /** The last confirmed request, so "move it to 4" can resolve "it". */
+  followUpOf?: string | null;
 }): Promise<AnalyzeResponse> {
+  const clarifications = input.clarifications?.length ? input.clarifications : undefined;
+  const followUpOf = input.followUpOf ?? undefined;
+
   if (input.image) {
     const form = new FormData();
     form.set('image', input.image);
     if (input.text) form.set('text', input.text);
-    if (input.clarification) form.set('clarification', input.clarification);
+    if (clarifications) form.set('clarifications', JSON.stringify(clarifications));
+    if (followUpOf) form.set('followUpOf', followUpOf);
     return parse<AnalyzeResponse>(
       await fetch('/api/ai/analyze', { method: 'POST', body: form }),
     );
@@ -47,7 +59,7 @@ export async function analyze(input: {
     await fetch('/api/ai/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: input.text, clarification: input.clarification }),
+      body: JSON.stringify({ text: input.text, clarifications, followUpOf }),
     }),
   );
 }

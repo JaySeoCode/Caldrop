@@ -5,7 +5,7 @@
  * override what the model proposed.
  */
 import { describe, expect, it } from 'vitest';
-import { analyzeInput } from '@/lib/ai/analyze';
+import { analyzeInput, type ClarificationTurn, type RecentEvent } from '@/lib/ai/analyze';
 import { UNTRUSTED_OPEN } from '@/lib/ai/prompts';
 import {
   NOW,
@@ -20,7 +20,8 @@ import {
 const baseInput = {
   text: null as string | null,
   image: null as { dataUrl: string } | null,
-  clarification: null as string | null,
+  clarifications: [] as ClarificationTurn[],
+  recentEvent: null as RecentEvent | null,
   timeZone: TZ,
   now: NOW,
   deleteEnabled: false,
@@ -453,14 +454,102 @@ describe('pipeline invariants', () => {
     expect(calendar.lookups).toHaveLength(0);
   });
 
-  it('passes the clarification answer back to the decision pass', async () => {
+  it('passes every clarification round, with its question, to both passes', async () => {
     const model = scriptedModel({ intent: intent(), decision: action() });
     await analyzeInput(
       { model, calendar: fakeCalendar() },
-      { ...baseInput, text: '다음 주에 밥 먹자', clarification: '다음 주 화요일 저녁 7시' },
+      {
+        ...baseInput,
+        text: '다음 주에 밥 먹자',
+        clarifications: [
+          { question: '어느 날 만나시나요?', answer: '다음 주 화요일' },
+          { question: '몇 시에 만나시나요?', answer: '저녁 7시' },
+        ],
+      },
     );
 
-    expect(model.calls[1]?.text).toContain('다음 주 화요일 저녁 7시');
-    expect(model.calls[1]?.text).toContain('ANSWERED A CLARIFYING QUESTION');
+    for (const call of model.calls) {
+      expect(call.text).toContain('CLARIFICATION HISTORY');
+      // The first answer is not lost when a second round happens.
+      expect(call.text).toContain('다음 주 화요일');
+      expect(call.text).toContain('몇 시에 만나시나요?');
+      expect(call.text).toContain('저녁 7시');
+    }
+    const decision = model.calls[1]?.text ?? '';
+    expect(decision.indexOf('다음 주 화요일')).toBeLessThan(decision.indexOf('저녁 7시'));
+  });
+});
+
+describe('follow-up to the last confirmed change', () => {
+  const justCreated = event({
+    id: 'evt_just_created',
+    title: '치과',
+    start: '2026-09-19T15:00:00+09:00',
+    end: '2026-09-19T16:00:00+09:00',
+  });
+  const recentEvent: RecentEvent = { action: 'CREATE', event: justCreated };
+
+  it('lets "그거 30분 미뤄줘" target the event the lookup did not find', async () => {
+    const model = scriptedModel({
+      intent: intent({
+        intentType: 'MODIFY_LIKE',
+        normalizedInput: '방금 만든 치과 일정을 30분 뒤로',
+        lookupWindow: { start: '2026-09-19T00:00:00+09:00', end: '2026-09-20T00:00:00+09:00' },
+        searchKeywords: [],
+      }),
+      decision: action({
+        action: 'UPDATE',
+        targetEventId: 'evt_just_created',
+        event: {
+          title: '치과',
+          start: '2026-09-19T15:30:00+09:00',
+          end: '2026-09-19T16:30:00+09:00',
+          allDay: false,
+          location: null,
+          description: null,
+        },
+        confidence: 0.9,
+      }),
+    });
+
+    const outcome = await analyzeInput(
+      // The keyword-less lookup comes back empty.
+      { model, calendar: fakeCalendar([]) },
+      { ...baseInput, text: '그거 30분 미뤄줘', recentEvent },
+    );
+
+    expect(model.calls[0]?.text).toContain('RECENT CONTEXT');
+    expect(model.calls[0]?.text).toContain('id=evt_just_created');
+    expect(outcome.action.action).toBe('UPDATE');
+    expect(outcome.action.targetEventId).toBe('evt_just_created');
+    // Recorded as a candidate, so /api/calendar/confirm will accept the target.
+    expect(outcome.candidates.map((candidate) => candidate.id)).toContain('evt_just_created');
+  });
+
+  it('does not add the recent event as a candidate for a new CREATE', async () => {
+    const model = scriptedModel({ intent: intent(), decision: action() });
+    const outcome = await analyzeInput(
+      { model, calendar: fakeCalendar() },
+      { ...baseInput, text: '다음 주 월요일 10시 미팅', recentEvent },
+    );
+
+    expect(outcome.action.action).toBe('CREATE');
+    expect(outcome.candidates).toHaveLength(0);
+  });
+
+  it('does not duplicate the recent event when the lookup already found it', async () => {
+    const model = scriptedModel({
+      intent: intent({
+        intentType: 'MODIFY_LIKE',
+        lookupWindow: { start: '2026-09-19T00:00:00+09:00', end: '2026-09-20T00:00:00+09:00' },
+      }),
+      decision: action({ action: 'NEED_CLARIFICATION', event: null, missingFields: ['target_event'] }),
+    });
+    const outcome = await analyzeInput(
+      { model, calendar: fakeCalendar([justCreated]) },
+      { ...baseInput, text: '그거 옮겨줘', recentEvent },
+    );
+
+    expect(outcome.candidates).toHaveLength(1);
   });
 });

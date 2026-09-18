@@ -47,3 +47,26 @@ export async function markActionFailed(actionId: string, message: string): Promi
     .update({ status: 'failed', error: message.slice(0, 500) })
     .eq('id', actionId);
 }
+
+/**
+ * The Google event id a request's *succeeded* action wrote, scoped to the owner.
+ * Null for a request that was never applied, failed, or deleted its event.
+ */
+export async function getSucceededEventId(
+  requestId: string,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await getServiceClient()
+    .from('calendar_actions')
+    .select('google_event_id')
+    .eq('request_id', requestId)
+    .eq('user_id', userId)
+    .eq('status', 'succeeded')
+    .in('action', ['CREATE', 'UPDATE'])
+    .maybeSingle<{ google_event_id: string | null }>();
+
+  if (error) {
+    throw new AppError('INTERNAL', 'Could not load the previous action.', { cause: error.message });
+  }
+  return data?.google_event_id ?? null;
+}

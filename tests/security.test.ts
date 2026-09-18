@@ -5,7 +5,13 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { decryptSecret, encryptSecret, safeEqual } from '@/lib/util/crypto';
-import { sniffImageType, validateImageUpload, validateText } from '@/lib/util/upload';
+import {
+  MAX_CLARIFICATION_ROUNDS,
+  sniffImageType,
+  validateClarifications,
+  validateImageUpload,
+  validateText,
+} from '@/lib/util/upload';
 import { consume, resetRateLimits } from '@/lib/util/rate-limit';
 import { AppError } from '@/lib/util/errors';
 
@@ -117,5 +123,29 @@ describe('rate limiting', () => {
     const rule = { limit: 1, windowMs: 1000 };
     consume('user-1', rule, 1000);
     expect(() => consume('user-1', rule, 2500)).not.toThrow();
+  });
+});
+
+describe('clarification history validation', () => {
+  it('keeps only the most recent rounds', () => {
+    const turns = Array.from({ length: MAX_CLARIFICATION_ROUNDS + 3 }, (_, index) => ({
+      question: `q${index}`,
+      answer: `a${index}`,
+    }));
+    const kept = validateClarifications(turns);
+    expect(kept).toHaveLength(MAX_CLARIFICATION_ROUNDS);
+    expect(kept.at(-1)?.answer).toBe(`a${MAX_CLARIFICATION_ROUNDS + 2}`);
+  });
+
+  it('rejects malformed history', () => {
+    expect(() => validateClarifications('nope')).toThrow(AppError);
+    expect(() => validateClarifications([{ question: 'q' }])).toThrow(AppError);
+    expect(() => validateClarifications([{ question: 'x'.repeat(1001), answer: 'a' }])).toThrow(
+      AppError,
+    );
+  });
+
+  it('treats a missing field as no history', () => {
+    expect(validateClarifications(undefined)).toEqual([]);
   });
 });

@@ -98,3 +98,25 @@ export function validateText(raw: unknown, field = 'text'): string {
   }
   return trimmed;
 }
+
+/** Clarification rounds kept per input; older rounds are dropped first. */
+export const MAX_CLARIFICATION_ROUNDS = 5;
+/** Matches the schema's cap on the model's `explanation`, which is the question. */
+const MAX_QUESTION_LENGTH = 1000;
+
+export function validateClarifications(
+  raw: unknown,
+): Array<{ question: string; answer: string }> {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new AppError('INVALID_INPUT', 'clarifications must be an array.');
+  }
+  return raw.slice(-MAX_CLARIFICATION_ROUNDS).map((turn: unknown) => {
+    const { question, answer } = (turn ?? {}) as { question?: unknown; answer?: unknown };
+    const validQuestion = validateText(question, 'clarification question');
+    if (validQuestion.length > MAX_QUESTION_LENGTH) {
+      throw new AppError('PAYLOAD_TOO_LARGE', 'clarification question is too long.');
+    }
+    return { question: validQuestion, answer: validateText(answer, 'clarification answer') };
+  });
+}

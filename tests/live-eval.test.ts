@@ -17,7 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { analyzeInput } from '@/lib/ai/analyze';
+import { analyzeInput, type ClarificationTurn, type RecentEvent } from '@/lib/ai/analyze';
 import { createOpenAIModel } from '@/lib/ai/client';
 import { fakeCalendar, event, NOW, TZ } from './fixtures/harness';
 import type { CalendarActionKind } from '@/schemas/calendar-action';
@@ -37,7 +37,8 @@ async function imageInput(name: string): Promise<{ dataUrl: string } | null> {
 const base = {
   text: null as string | null,
   image: null as { dataUrl: string } | null,
-  clarification: null as string | null,
+  clarifications: [] as ClarificationTurn[],
+  recentEvent: null as RecentEvent | null,
   timeZone: TZ,
   now: NOW, // Friday 2026-09-18 17:20 KST
   deleteEnabled: false,

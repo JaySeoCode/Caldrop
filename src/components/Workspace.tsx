@@ -5,7 +5,7 @@ import { ClarificationCard } from '@/components/ClarificationCard';
 import { InputCard } from '@/components/InputCard';
 import { PreviewCard } from '@/components/PreviewCard';
 import { ResultCard } from '@/components/ResultCard';
-import { ApiError, analyze, confirm, discard } from '@/lib/api-client';
+import { ApiError, analyze, confirm, discard, type ClarificationTurn } from '@/lib/api-client';
 import { takeSharedPayload, type SharedPayload } from '@/lib/shared-inbox';
 import type { AnalyzeResponse, ConfirmResponse } from '@/types';
 
@@ -35,6 +35,11 @@ export function Workspace({
   const [error, setError] = useState<string | null>(null);
   // Kept so a clarification answer can be re-analysed with the original input.
   const [pending, setPending] = useState<PendingInput | null>(null);
+  // Every question/answer round for the pending input, so later rounds see earlier ones.
+  const [turns, setTurns] = useState<ClarificationTurn[]>([]);
+  // The last confirmed change; the next input may refer to it ("move it to 4").
+  // Survives reset() on purpose - it is cleared explicitly or replaced.
+  const [recent, setRecent] = useState<{ requestId: string; title: string } | null>(null);
   // Content that arrived through the Android share sheet, shown in the input card.
   const [shared, setShared] = useState<SharedPayload | null>(null);
 
@@ -44,17 +49,19 @@ export function Workspace({
     setResult(null);
     setError(null);
     setPending(null);
+    setTurns([]);
     setShared(null);
   }, []);
 
   const runAnalysis = useCallback(
-    async (input: PendingInput, clarification?: string) => {
+    async (input: PendingInput, clarifications: ClarificationTurn[], followUpOf: string | null) => {
       setPhase('analyzing');
       setError(null);
       try {
-        const response = await analyze({ ...input, clarification });
+        const response = await analyze({ ...input, clarifications, followUpOf });
         setAnalysis(response);
         setPending(input);
+        setTurns(clarifications);
         setPhase('preview');
       } catch (cause) {
         setError(cause instanceof ApiError ? cause.message : 'Analysis failed. Please try again.');
@@ -81,7 +88,8 @@ export function Workspace({
     void takeSharedPayload().then((payload) => {
       if (!payload) return;
       setShared(payload);
-      void runAnalysis({ text: payload.text, image: payload.image });
+      // A shared item is new content, never a follow-up to the last change.
+      void runAnalysis({ text: payload.text, image: payload.image }, [], null);
     });
   }, [runAnalysis]);
 
@@ -90,7 +98,11 @@ export function Workspace({
     setPhase('confirming');
     setError(null);
     try {
-      setResult(await confirm(analysis.requestId));
+      const confirmed = await confirm(analysis.requestId);
+      setResult(confirmed);
+      setRecent(
+        confirmed.event ? { requestId: confirmed.requestId, title: confirmed.event.title } : null,
+      );
       setPhase('done');
     } catch (cause) {
       setError(
@@ -121,7 +133,15 @@ export function Workspace({
           timezone={analysis.timezone}
           busy={busy}
           onSubmit={(answer) => {
-            if (pending) void runAnalysis(pending, answer);
+            if (!pending) return;
+            // The unanswered proposal is superseded by the re-analysis; close it
+            // so it does not linger as an open 'previewed' row.
+            void discard(analysis.requestId);
+            void runAnalysis(
+              pending,
+              [...turns, { question: action.explanation, answer }],
+              recent?.requestId ?? null,
+            );
           }}
           onCancel={onCancel}
         />
@@ -165,13 +185,29 @@ export function Workspace({
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
       ) : null}
 
+      {(phase === 'idle' || phase === 'analyzing') && recent ? (
+        <p className="flex items-center justify-between gap-3 rounded-xl bg-black/[0.03] px-4 py-2.5 text-xs text-ink-soft">
+          <span className="min-w-0 truncate">
+            Follow-ups like &ldquo;move it to 4&rdquo; refer to <b>{recent.title}</b>
+          </span>
+          <button
+            type="button"
+            className="shrink-0 underline underline-offset-2"
+            onClick={() => setRecent(null)}
+            disabled={busy}
+          >
+            Clear
+          </button>
+        </p>
+      ) : null}
+
       {phase === 'idle' || phase === 'analyzing' ? (
         <InputCard
           // Remount when a new share arrives so the card shows its content.
           key={shared ? 'shared' : 'empty'}
           busy={busy}
           initial={shared}
-          onAnalyze={(input) => void runAnalysis(input)}
+          onAnalyze={(input) => void runAnalysis(input, [], recent?.requestId ?? null)}
         />
       ) : null}
 
