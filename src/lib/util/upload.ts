@@ -72,10 +72,9 @@ export async function validateImageUpload(file: File): Promise<ValidatedImage> {
   if (!sniffed) {
     throw new AppError('UNSUPPORTED_MEDIA_TYPE', 'That file is not a supported image.');
   }
-  if (sniffed !== file.type) {
-    // Declared type disagrees with the actual bytes: refuse rather than guess.
-    throw new AppError('UNSUPPORTED_MEDIA_TYPE', 'The file contents do not match its type.');
-  }
+  // A declared type that disagrees with the bytes is not refused: Android share
+  // targets routinely label a PNG screenshot "image/jpeg". The sniffed type is
+  // what gets used downstream, and it is already restricted to real images.
 
   return {
     dataUrl: `data:${sniffed};base64,${buffer.toString('base64')}`,

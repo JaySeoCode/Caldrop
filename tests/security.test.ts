@@ -85,6 +85,12 @@ describe('upload validation', () => {
     });
   });
 
+  it('trusts the bytes when an app mislabels a PNG as JPEG', async () => {
+    const validated = await validateImageUpload(file(PNG_HEADER, 'image/jpeg', 'shot.jpg'));
+    expect(validated.mimeType).toBe('image/png');
+    expect(validated.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
   it('rejects a disallowed declared type', async () => {
     await expect(
       validateImageUpload(file(PNG_HEADER, 'image/svg+xml', 'shot.svg')),
