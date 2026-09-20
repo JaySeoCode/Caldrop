@@ -17,8 +17,11 @@ import { consume, RATE_LIMITS } from '@/lib/util/rate-limit';
 import {
   validateClarifications,
   validateImageUpload,
+  validatePdfUpload,
   validateText,
   MAX_TEXT_LENGTH,
+  PDF_TYPE,
+  type ValidatedDocument,
 } from '@/lib/util/upload';
 import type { AnalyzeResponse, InputType } from '@/types';
 
@@ -99,6 +102,7 @@ export async function POST(request: NextRequest) {
     let clarifications: ReturnType<typeof validateClarifications> = [];
     let followUpOf: string | null = null;
     let image: { dataUrl: string; sha256: string } | null = null;
+    let document: ValidatedDocument | null = null;
 
     if (contentType.includes('multipart/form-data')) {
       const form = await request.formData();
@@ -106,8 +110,14 @@ export async function POST(request: NextRequest) {
       const rawText = form.get('text');
 
       if (file instanceof File) {
-        const validated = await validateImageUpload(file);
-        image = { dataUrl: validated.dataUrl, sha256: validated.sha256 };
+        // One field carries either a screenshot or a PDF; the declared type only
+        // picks the validator, and each one sniffs the bytes itself.
+        if (file.type === PDF_TYPE) {
+          document = await validatePdfUpload(file);
+        } else {
+          const validated = await validateImageUpload(file);
+          image = { dataUrl: validated.dataUrl, sha256: validated.sha256 };
+        }
       }
       if (typeof rawText === 'string' && rawText.trim()) text = validateText(rawText);
       clarifications = parseClarificationsField(form.get('clarifications'));
@@ -125,18 +135,21 @@ export async function POST(request: NextRequest) {
       throw new AppError('UNSUPPORTED_MEDIA_TYPE', 'Send multipart/form-data or application/json.');
     }
 
-    if (!text && !image) {
-      throw new AppError('INVALID_INPUT', `Provide text (max ${MAX_TEXT_LENGTH} chars) or a screenshot.`);
+    if (!text && !image && !document) {
+      throw new AppError(
+        'INVALID_INPUT',
+        `Provide text (max ${MAX_TEXT_LENGTH} chars), a screenshot or a PDF.`,
+      );
     }
 
-    const inputType: InputType = image ? 'image' : 'text';
+    const inputType: InputType = document ? 'pdf' : image ? 'image' : 'text';
     requestId = await createRequest({
       userId: session.id,
       inputType,
       originalText: text,
-      // Screenshots are not persisted; only a digest is kept for the audit trail.
+      // Uploads are not persisted; only a digest is kept for the audit trail.
       imageUrl: null,
-      imageSha256: image?.sha256 ?? null,
+      imageSha256: image?.sha256 ?? document?.sha256 ?? null,
     });
 
     const ctx = await calendarContextFor(session.id, session.timezone);
@@ -152,6 +165,7 @@ export async function POST(request: NextRequest) {
       {
         text,
         image: image ? { dataUrl: image.dataUrl } : null,
+        document: document ? { dataUrl: document.dataUrl, filename: document.filename } : null,
         clarifications,
         recentEvent,
         timeZone: session.timezone,
@@ -171,6 +185,7 @@ export async function POST(request: NextRequest) {
       action: outcome.action,
       candidates: outcome.candidates,
       conflicts: outcome.conflicts,
+      eventConflicts: outcome.eventConflicts,
       timezone: session.timezone,
       injectionDetected: outcome.injectionDetected,
     };

@@ -16,6 +16,7 @@ export interface GoogleEvent {
   organizer?: { self?: boolean; email?: string };
   creator?: { self?: boolean; email?: string };
   recurringEventId?: string;
+  recurrence?: string[];
   guestsCanModify?: boolean;
 }
 
@@ -32,4 +33,6 @@ export interface EventWritePayload {
   location: string | null;
   description: string | null;
   timeZone: string;
+  /** Normalised RRULE for a repeating event; null writes a single event. */
+  recurrence: string | null;
 }

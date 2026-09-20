@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
-import { ALLOWED_IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_TEXT_LENGTH } from '@/lib/util/upload-constants';
+import {
+  ALLOWED_IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_TEXT_LENGTH,
+  PDF_TYPE,
+} from '@/lib/util/upload-constants';
 
 interface InputCardProps {
   busy: boolean;
@@ -10,8 +16,20 @@ interface InputCardProps {
   initial?: { text?: string; image?: File } | null;
 }
 
-function isAllowed(file: File): boolean {
+function isImage(file: File): boolean {
   return (ALLOWED_IMAGE_TYPES as readonly string[]).includes(file.type);
+}
+
+function isPdf(file: File): boolean {
+  return file.type === PDF_TYPE;
+}
+
+function sizeLimit(file: File): number {
+  return isPdf(file) ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+}
+
+function megabytes(bytes: number): number {
+  return bytes / (1024 * 1024);
 }
 
 export function InputCard({ busy, onAnalyze, initial }: InputCardProps) {
@@ -27,19 +45,24 @@ export function InputCard({ busy, onAnalyze, initial }: InputCardProps) {
   const acceptFile = useCallback((file: File) => {
     // Mirrors the server-side rules so obvious mistakes fail instantly; the
     // server re-validates everything, including the actual file signature.
-    if (!isAllowed(file)) {
-      setLocalError('Only PNG, JPEG, WebP or GIF screenshots are supported.');
+    if (!isImage(file) && !isPdf(file)) {
+      setLocalError('Attach a PNG, JPEG, WebP or GIF screenshot, or a PDF.');
       return;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setLocalError(`Screenshots must be ${MAX_IMAGE_BYTES / (1024 * 1024)}MB or smaller.`);
+    if (file.size > sizeLimit(file)) {
+      setLocalError(
+        isPdf(file)
+          ? `PDFs must be ${megabytes(MAX_PDF_BYTES)}MB or smaller.`
+          : `Screenshots must be ${megabytes(MAX_IMAGE_BYTES)}MB or smaller.`,
+      );
       return;
     }
     setLocalError(null);
     setImage(file);
     setPreviewUrl((previous) => {
       if (previous) URL.revokeObjectURL(previous);
-      return URL.createObjectURL(file);
+      // A PDF has no inline preview; the file name is shown instead.
+      return isImage(file) ? URL.createObjectURL(file) : null;
     });
   }, []);
 
@@ -80,6 +103,22 @@ export function InputCard({ busy, onAnalyze, initial }: InputCardProps) {
       onDrop={onDrop}
       onPaste={onPaste}
     >
+      {image && !previewUrl ? (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-black/[0.06] px-4 py-3">
+          <span className="min-w-0 truncate text-sm">
+            <span className="text-ink-faint">PDF</span> {image.name}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded-lg px-2.5 py-1 text-xs text-ink-soft hover:text-ink"
+            onClick={clearImage}
+            disabled={busy}
+          >
+            Remove
+          </button>
+        </div>
+      ) : null}
+
       {previewUrl ? (
         <div className="relative mb-4 overflow-hidden rounded-xl border border-black/[0.06]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -93,22 +132,22 @@ export function InputCard({ busy, onAnalyze, initial }: InputCardProps) {
             Remove
           </button>
         </div>
-      ) : (
+      ) : image ? null : (
         <button
           type="button"
           className="mb-4 flex w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-black/15 py-8 text-sm text-ink-faint hover:border-ink/25 hover:text-ink-soft"
           onClick={() => fileInput.current?.click()}
           disabled={busy}
         >
-          <span>Drag a screenshot here</span>
-          <span className="text-xs">or tap to choose from your photos</span>
+          <span>Drag a screenshot or PDF here</span>
+          <span className="text-xs">or tap to choose a file</span>
         </button>
       )}
 
       <input
         ref={fileInput}
         type="file"
-        accept={ALLOWED_IMAGE_TYPES.join(',')}
+        accept={[...ALLOWED_IMAGE_TYPES, PDF_TYPE].join(',')}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];

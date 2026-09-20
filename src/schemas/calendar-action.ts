@@ -15,9 +15,14 @@
  */
 import { z } from 'zod';
 import { isValidIsoDateTime } from '@/lib/util/datetime';
+import { isValidRecurrence } from '@/lib/util/rrule';
+
+/** Upper bound on one CREATE_MANY proposal - a syllabus, not a whole year. */
+export const MAX_EVENTS_PER_PROPOSAL = 20;
 
 export const CALENDAR_ACTIONS = [
   'CREATE',
+  'CREATE_MANY',
   'UPDATE',
   'DELETE',
   'NO_ACTION',
@@ -38,6 +43,7 @@ export const EVENT_FIELDS = [
   'description',
   'all_day',
   'target_event',
+  'recurrence',
 ] as const;
 
 export type EventField = (typeof EVENT_FIELDS)[number];
@@ -53,6 +59,15 @@ export const calendarEventDraftSchema = z.object({
   allDay: z.boolean(),
   location: z.string().max(500).nullable(),
   description: z.string().max(4000).nullable(),
+  /**
+   * RRULE for a repeating event, describing how the first occurrence repeats.
+   * Parsed before it can reach Google; see `@/lib/util/rrule`.
+   */
+  recurrence: z
+    .string()
+    .max(300)
+    .refine(isValidRecurrence, { message: 'Unsupported recurrence rule' })
+    .nullable(),
 });
 
 export type CalendarEventDraft = z.infer<typeof calendarEventDraftSchema>;
@@ -61,6 +76,8 @@ export const calendarActionSchema = z
   .object({
     action: z.enum(CALENDAR_ACTIONS),
     event: calendarEventDraftSchema.nullable(),
+    /** CREATE_MANY only: one entry per proposed event, in reading order. */
+    events: z.array(calendarEventDraftSchema).max(MAX_EVENTS_PER_PROPOSAL),
     targetEventId: z.string().min(1).max(1024).nullable(),
     confidence: z.number().min(0).max(1),
     inferredFields: z.array(z.enum(EVENT_FIELDS)).max(10),
@@ -74,9 +91,33 @@ export const calendarActionSchema = z
       }
     };
 
+    if (value.action !== 'CREATE_MANY' && value.events.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'events is only allowed for CREATE_MANY',
+        path: ['events'],
+      });
+    }
+
     switch (value.action) {
       case 'CREATE':
         requireEvent('CREATE requires an event payload');
+        break;
+      case 'CREATE_MANY':
+        if (value.events.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'CREATE_MANY requires at least one event',
+            path: ['events'],
+          });
+        }
+        if (value.event) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'CREATE_MANY carries its events in `events`, not `event`',
+            path: ['event'],
+          });
+        }
         break;
       case 'UPDATE':
         requireEvent('UPDATE requires an event payload');
@@ -110,20 +151,54 @@ export const calendarActionSchema = z
         break;
     }
 
-    if (value.event && !value.event.allDay) {
-      const start = new Date(value.event.start).getTime();
-      const end = new Date(value.event.end).getTime();
-      if (end <= start) {
+    const drafts: Array<{ draft: CalendarEventDraft; path: Array<string | number> }> = [
+      ...(value.event ? [{ draft: value.event, path: ['event'] as Array<string | number> }] : []),
+      ...value.events.map((draft, index) => ({
+        draft,
+        path: ['events', index] as Array<string | number>,
+      })),
+    ];
+    for (const { draft, path } of drafts) {
+      if (draft.allDay) continue;
+      if (new Date(draft.end).getTime() <= new Date(draft.start).getTime()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Event end must be after start',
-          path: ['event', 'end'],
+          path: [...path, 'end'],
         });
       }
     }
   });
 
 export type CalendarAction = z.infer<typeof calendarActionSchema>;
+
+/** One proposed event. Shared by `event` and by each entry of `events`. */
+const eventJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'start', 'end', 'allDay', 'location', 'description', 'recurrence'],
+  properties: {
+    title: { type: 'string', description: 'Short event title in the language of the input.' },
+    start: {
+      type: 'string',
+      description:
+        'Start as ISO-8601 with an explicit offset, e.g. 2026-09-18T19:00:00+09:00. For an all-day event use 00:00:00 in the user timezone. For a repeating event this is the FIRST occurrence.',
+    },
+    end: {
+      type: 'string',
+      description:
+        'End as ISO-8601 with an explicit offset, after start. For a repeating event this ends the FIRST occurrence, never the series. If inferred, list "end" in inferredFields.',
+    },
+    allDay: { type: 'boolean' },
+    location: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+    description: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+    recurrence: {
+      anyOf: [{ type: 'string' }, { type: 'null' }],
+      description:
+        'Null unless the event repeats. Otherwise an RRULE using only FREQ (DAILY/WEEKLY/MONTHLY/YEARLY), INTERVAL, BYDAY (WEEKLY only) and exactly one of UNTIL (UTC basic format, e.g. 20260615T145959Z) or COUNT. A repeat must always be bounded. Example: "RRULE:FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20260615T145959Z".',
+    },
+  },
+} as const;
 
 /** JSON Schema handed to the Responses API (`text.format`, strict mode). */
 export const calendarActionJsonSchema = {
@@ -132,6 +207,7 @@ export const calendarActionJsonSchema = {
   required: [
     'action',
     'event',
+    'events',
     'targetEventId',
     'confidence',
     'inferredFields',
@@ -143,34 +219,18 @@ export const calendarActionJsonSchema = {
       type: 'string',
       enum: [...CALENDAR_ACTIONS],
       description:
-        'CREATE a new event, UPDATE/DELETE an existing candidate event, NO_ACTION when the input has no schedulable content, NEED_CLARIFICATION when required facts are missing or ambiguous.',
+        'CREATE one new event, CREATE_MANY several new events read out of one document (a syllabus, an itinerary), UPDATE/DELETE an existing candidate event, NO_ACTION when the input has no schedulable content, NEED_CLARIFICATION when required facts are missing or ambiguous.',
     },
     event: {
-      anyOf: [
-        {
-          type: 'object',
-          additionalProperties: false,
-          required: ['title', 'start', 'end', 'allDay', 'location', 'description'],
-          properties: {
-            title: { type: 'string', description: 'Short event title in the language of the input.' },
-            start: {
-              type: 'string',
-              description:
-                'Start as ISO-8601 with an explicit offset, e.g. 2026-09-18T19:00:00+09:00. For all-day events use 00:00:00 in the user timezone.',
-            },
-            end: {
-              type: 'string',
-              description:
-                'End as ISO-8601 with an explicit offset. Must be after start. If inferred, list "end" in inferredFields.',
-            },
-            allDay: { type: 'boolean' },
-            location: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-            description: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-          },
-        },
-        { type: 'null' },
-      ],
-      description: 'Null for NO_ACTION, NEED_CLARIFICATION, and DELETE.',
+      anyOf: [eventJsonSchema, { type: 'null' }],
+      description: 'The single event for CREATE and UPDATE. Null for every other action.',
+    },
+    events: {
+      type: 'array',
+      items: eventJsonSchema,
+      description:
+        'CREATE_MANY only: every event to propose, in reading order, at most ' +
+        `${MAX_EVENTS_PER_PROPOSAL}. An empty array for every other action.`,
     },
     targetEventId: {
       anyOf: [{ type: 'string' }, { type: 'null' }],

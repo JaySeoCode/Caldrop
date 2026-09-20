@@ -44,6 +44,8 @@ create table if not exists public.google_accounts (
 do $$ begin
   create type public.input_type as enum ('text', 'image');
 exception when duplicate_object then null; end $$;
+-- Added later: PDF uploads (a syllabus, an itinerary).
+alter type public.input_type add value if not exists 'pdf';
 
 do $$ begin
   create type public.request_status as enum ('analyzing', 'previewed', 'confirmed', 'discarded', 'failed');
@@ -88,6 +90,8 @@ create table if not exists public.calendar_actions (
   request_id      uuid not null references public.calendar_requests (id) on delete cascade,
   user_id         uuid not null references public.users (id) on delete cascade,
   action          public.calendar_action_kind not null,
+  -- Position inside a multi-event proposal (CREATE_MANY); 0 for single writes.
+  event_index     integer not null default 0,
   google_event_id text,
   payload         jsonb not null default '{}'::jsonb,
   status          public.action_status not null default 'pending',
@@ -95,10 +99,17 @@ create table if not exists public.calendar_actions (
   created_at      timestamptz not null default now()
 );
 
+-- Added later, for tables created before CREATE_MANY existed.
+alter table public.calendar_actions
+  add column if not exists event_index integer not null default 0;
+
 create index if not exists calendar_actions_user_created_idx
   on public.calendar_actions (user_id, created_at desc);
-create unique index if not exists calendar_actions_request_unique
-  on public.calendar_actions (request_id);
+-- One row per (request, event): still single-use per event, but a proposal may
+-- now write several events under one request.
+drop index if exists public.calendar_actions_request_unique;
+create unique index if not exists calendar_actions_request_event_unique
+  on public.calendar_actions (request_id, event_index);
 
 -- --------------------------------------------------------------------------
 -- updated_at triggers

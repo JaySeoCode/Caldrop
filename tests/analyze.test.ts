@@ -20,6 +20,7 @@ import {
 const baseInput = {
   text: null as string | null,
   image: null as { dataUrl: string } | null,
+  document: null as { dataUrl: string; filename: string } | null,
   clarifications: [] as ClarificationTurn[],
   recentEvent: null as RecentEvent | null,
   timeZone: TZ,
@@ -41,6 +42,7 @@ describe('1. "내일 오후 3시에 치과" -> CREATE', () => {
           allDay: false,
           location: null,
           description: null,
+          recurrence: null,
         },
         inferredFields: ['end'],
         explanation: '내일 오후 3시 치과 일정으로 판단했습니다.',
@@ -85,6 +87,7 @@ describe('2. "이번 주 토요일 저녁 7시에 강남에서 민수랑 저녁"
           allDay: false,
           location: '강남',
           description: null,
+          recurrence: null,
         },
         inferredFields: ['end'],
         confidence: 0.95,
@@ -129,6 +132,7 @@ describe('3. "내일 3시 회의 4시로 바꿔줘" -> UPDATE', () => {
           allDay: false,
           location: null,
           description: null,
+          recurrence: null,
         },
         confidence: 0.92,
       }),
@@ -204,6 +208,7 @@ describe('5. concert ticket screenshot -> CREATE', () => {
           allDay: false,
           location: 'KSPO Dome',
           description: null,
+          recurrence: null,
         },
         inferredFields: ['end'],
       }),
@@ -234,6 +239,7 @@ describe('6. flight ticket screenshot -> CREATE', () => {
           allDay: false,
           location: 'Incheon International Airport',
           description: null,
+          recurrence: null,
         },
         inferredFields: [],
         confidence: 0.9,
@@ -348,6 +354,7 @@ describe('9. an existing event occupies the same slot', () => {
           allDay: false,
           location: null,
           description: null,
+          recurrence: null,
         },
         inferredFields: ['end'],
       }),
@@ -412,6 +419,7 @@ describe('10. two or more candidate events match', () => {
           allDay: false,
           location: null,
           description: null,
+          recurrence: null,
         },
       }),
     });
@@ -426,12 +434,119 @@ describe('10. two or more candidate events match', () => {
   });
 });
 
+describe('11. a syllabus PDF -> CREATE_MANY', () => {
+  const FAKE_PDF = { dataUrl: 'data:application/pdf;base64,JVBERi0=', filename: 'syllabus.pdf' };
+
+  const weeklyClass = {
+    title: 'Database Systems',
+    start: '2026-09-22T10:30:00+09:00',
+    end: '2026-09-22T11:45:00+09:00',
+    allDay: false,
+    location: '302',
+    description: null,
+    recurrence: 'RRULE:FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261212T145959Z',
+  };
+  const midterm = {
+    title: 'Midterm',
+    start: '2026-10-27T10:30:00+09:00',
+    end: '2026-10-27T12:00:00+09:00',
+    allDay: false,
+    location: '302',
+    description: null,
+    recurrence: null,
+  };
+
+  const syllabusIntent = intent({
+    normalizedInput: 'Weekly: Database Systems Tue+Thu 10:30-11:45; Once: Midterm Oct 27',
+  });
+
+  it('proposes one recurring class plus the exam, and sends the PDF to pass 1 only', async () => {
+    const model = scriptedModel({
+      intent: syllabusIntent,
+      decision: action({
+        action: 'CREATE_MANY',
+        event: null,
+        events: [weeklyClass, midterm],
+        explanation: '강의계획서에서 일정 2개를 찾았습니다.',
+      }),
+    });
+
+    const outcome = await analyzeInput(
+      { model, calendar: fakeCalendar() },
+      { ...baseInput, document: FAKE_PDF },
+    );
+
+    expect(outcome.action.action).toBe('CREATE_MANY');
+    expect(outcome.action.events).toHaveLength(2);
+    expect(outcome.action.events[0]?.recurrence).toBe(
+      'RRULE:FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261212T145959Z',
+    );
+    expect(model.calls[0]?.document?.filename).toBe('syllabus.pdf');
+    expect(model.calls[1]?.document).toBeUndefined();
+    // Pass 2 is told the input was a document, so it knows CREATE_MANY applies.
+    expect(model.calls[1]?.text).toContain('PDF document');
+  });
+
+  it('reports overlaps per proposed event', async () => {
+    const busy = event({
+      id: 'evt_busy',
+      title: '기존 수업',
+      start: '2026-10-27T10:30:00+09:00',
+      end: '2026-10-27T12:00:00+09:00',
+    });
+    const model = scriptedModel({
+      intent: syllabusIntent,
+      decision: action({
+        action: 'CREATE_MANY',
+        event: null,
+        events: [weeklyClass, midterm],
+      }),
+    });
+
+    const outcome = await analyzeInput(
+      { model, calendar: fakeCalendar([busy]) },
+      { ...baseInput, document: FAKE_PDF },
+    );
+
+    expect(outcome.eventConflicts).toHaveLength(2);
+    expect(outcome.eventConflicts[0]).toHaveLength(0);
+    expect(outcome.eventConflicts[1]?.map((conflict) => conflict.id)).toEqual(['evt_busy']);
+  });
+
+  it('rejects a proposal whose recurrence rule we cannot parse', async () => {
+    const model = scriptedModel({
+      intent: syllabusIntent,
+      decision: action({
+        action: 'CREATE_MANY',
+        event: null,
+        // Unbounded: this would repeat on the user's calendar forever.
+        events: [{ ...weeklyClass, recurrence: 'RRULE:FREQ=WEEKLY;BYDAY=TU' }],
+      }),
+    });
+
+    await expect(
+      analyzeInput({ model, calendar: fakeCalendar() }, { ...baseInput, document: FAKE_PDF }),
+    ).rejects.toThrow(/invalid calendar action/);
+  });
+
+  it('rejects CREATE_MANY with no events', async () => {
+    const model = scriptedModel({
+      intent: syllabusIntent,
+      decision: action({ action: 'CREATE_MANY', event: null, events: [] }),
+    });
+
+    await expect(
+      analyzeInput({ model, calendar: fakeCalendar() }, { ...baseInput, document: FAKE_PDF }),
+    ).rejects.toThrow(/invalid calendar action/);
+  });
+});
+
 describe('pipeline invariants', () => {
-  it('rejects an input with neither text nor image', async () => {
+  it('rejects an input with no text, screenshot or PDF', async () => {
     const model = scriptedModel({ intent: intent(), decision: action() });
     await expect(
       analyzeInput({ model, calendar: fakeCalendar() }, baseInput),
-    ).rejects.toThrow(/Provide text or a screenshot/);
+    ).rejects.toThrow(/Provide text, a screenshot or a PDF/);
   });
 
   it('rejects a decision that violates the schema', async () => {
@@ -507,6 +622,7 @@ describe('follow-up to the last confirmed change', () => {
           allDay: false,
           location: null,
           description: null,
+          recurrence: null,
         },
         confidence: 0.9,
       }),

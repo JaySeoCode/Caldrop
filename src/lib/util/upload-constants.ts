@@ -10,3 +10,12 @@ export const MAX_TEXT_LENGTH = 8000;
 
 export const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
 export type AllowedImageType = (typeof ALLOWED_IMAGE_TYPES)[number];
+
+/**
+ * PDFs are read by the model page by page, so the cap is about tokens and
+ * latency as much as bandwidth.
+ */
+export const MAX_PDF_BYTES = 10 * 1024 * 1024;
+/** Pages the model is asked to read in one go. A syllabus, not a textbook. */
+export const MAX_PDF_PAGES = 10;
+export const PDF_TYPE = 'application/pdf';

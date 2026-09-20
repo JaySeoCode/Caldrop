@@ -83,6 +83,7 @@ function toCalendarEvent(event: GoogleEvent): CalendarEvent {
     htmlLink: event.htmlLink ?? null,
     status: event.status ?? null,
     organizerSelf: Boolean(event.organizer?.self ?? event.creator?.self),
+    recurrence: event.recurrence?.[0] ?? null,
     canEdit: Boolean(event.organizer?.self ?? event.creator?.self ?? event.guestsCanModify),
   };
 }
@@ -181,6 +182,7 @@ export async function createEvent(
       summary: payload.title,
       location: payload.location ?? undefined,
       description: payload.description ?? undefined,
+      recurrence: payload.recurrence ? [payload.recurrence] : undefined,
       ...toGoogleDates(payload),
     }),
   });
@@ -203,6 +205,9 @@ export async function updateEvent(
         summary: payload.title,
         location: payload.location ?? undefined,
         description: payload.description ?? undefined,
+        // Only sent when the proposal carries a rule, so a PATCH that just moves
+        // the time leaves an existing series rule alone.
+        recurrence: payload.recurrence ? [payload.recurrence] : undefined,
         ...toGoogleDates(payload),
       }),
     },

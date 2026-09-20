@@ -13,7 +13,8 @@ import { serverEnv } from '@/lib/util/env';
 import { AppError, toErrorPayload } from '@/lib/util/errors';
 import { consume, RATE_LIMITS } from '@/lib/util/rate-limit';
 import type { EventWritePayload } from '@/lib/calendar/types';
-import type { ConfirmResponse } from '@/types';
+import type { CalendarEventDraft } from '@/schemas/calendar-action';
+import type { ConfirmResponse, ConfirmFailure } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,13 +36,57 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *   4. for UPDATE/DELETE, the target id must be one of the candidates that were
  *      retrieved from *this user's* calendar during the analysis;
  *   5. the event is re-fetched from Google, which enforces real access control.
+ *
+ * A CREATE_MANY proposal writes several events. The client may send a subset of
+ * indexes - which events the user ticked - but never the events themselves, and
+ * each (request, index) pair can only be written once.
  */
+
+function toWritePayload(draft: CalendarEventDraft, timeZone: string): EventWritePayload {
+  return {
+    title: draft.title,
+    start: draft.start,
+    end: draft.end,
+    allDay: draft.allDay,
+    location: draft.location,
+    description: draft.description,
+    timeZone,
+    recurrence: draft.recurrence,
+  };
+}
+
+/** The ticked events, defaulting to all of them. Indexes are positions in `events`. */
+function parseSelection(raw: unknown, total: number): number[] {
+  if (raw === undefined || raw === null) return [...Array(total).keys()];
+  if (!Array.isArray(raw)) {
+    throw new AppError('INVALID_INPUT', 'eventIndexes must be an array of numbers.');
+  }
+  const selected = [
+    ...new Set(
+      raw.map((value) => {
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value >= total) {
+          throw new AppError('INVALID_INPUT', 'eventIndexes contains an unknown event.');
+        }
+        return value;
+      }),
+    ),
+  ].sort((a, b) => a - b);
+
+  if (selected.length === 0) {
+    throw new AppError('INVALID_INPUT', 'Select at least one event to add.');
+  }
+  return selected;
+}
 export async function POST(request: NextRequest) {
   try {
     const session = await requireSession();
     consume(`confirm:${session.id}`, RATE_LIMITS.confirm);
 
-    const body = (await request.json()) as { requestId?: unknown; decision?: unknown };
+    const body = (await request.json()) as {
+      requestId?: unknown;
+      decision?: unknown;
+      eventIndexes?: unknown;
+    };
     const requestId = body.requestId;
     if (typeof requestId !== 'string' || !UUID_RE.test(requestId)) {
       throw new AppError('INVALID_INPUT', 'A valid requestId is required.');
@@ -79,6 +124,58 @@ export async function POST(request: NextRequest) {
 
     const ctx = await calendarContextFor(session.id, session.timezone);
 
+    if (proposal.action === 'CREATE_MANY') {
+      const selection = parseSelection(body.eventIndexes, proposal.events.length);
+      const created: ConfirmResponse['events'] = [];
+      const failures: ConfirmFailure[] = [];
+
+      for (const index of selection) {
+        const draft = proposal.events[index];
+        if (!draft) continue;
+        try {
+          const actionId = await recordAction({
+            requestId,
+            userId: session.id,
+            action: 'CREATE',
+            payload: draft,
+            eventIndex: index,
+          });
+          try {
+            const event = await createEvent(ctx, toWritePayload(draft, session.timezone));
+            await markActionSucceeded(actionId, event.id);
+            created.push(event);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'unknown error';
+            await markActionFailed(actionId, message).catch(() => undefined);
+            throw error;
+          }
+        } catch (error) {
+          // One bad event must not discard the ones that did get written.
+          failures.push({
+            index,
+            title: draft.title,
+            message:
+              error instanceof AppError
+                ? error.message
+                : 'Google Calendar refused this event.',
+          });
+        }
+      }
+
+      if (created.length === 0) {
+        throw new AppError('CALENDAR_FAILED', 'None of the events could be added.');
+      }
+      await setRequestStatus(requestId, 'confirmed');
+      return NextResponse.json({
+        requestId,
+        action: 'CREATE_MANY',
+        event: null,
+        events: created,
+        deletedEventId: null,
+        failures,
+      } satisfies ConfirmResponse);
+    }
+
     // Ownership / access verification for mutations of existing events.
     if (proposal.action === 'UPDATE' || proposal.action === 'DELETE') {
       const targetId = proposal.targetEventId;
@@ -112,27 +209,32 @@ export async function POST(request: NextRequest) {
       if (proposal.action === 'DELETE') {
         const targetId = proposal.targetEventId as string;
         await deleteEvent(ctx, targetId);
-        response = { requestId, action: 'DELETE', event: null, deletedEventId: targetId };
+        response = {
+          requestId,
+          action: 'DELETE',
+          event: null,
+          events: [],
+          deletedEventId: targetId,
+          failures: [],
+        };
       } else {
         const draft = proposal.event;
         if (!draft) throw new AppError('INVALID_INPUT', 'The proposal has no event payload.');
 
-        const payload: EventWritePayload = {
-          title: draft.title,
-          start: draft.start,
-          end: draft.end,
-          allDay: draft.allDay,
-          location: draft.location,
-          description: draft.description,
-          timeZone: session.timezone,
-        };
-
+        const payload = toWritePayload(draft, session.timezone);
         const event =
           proposal.action === 'CREATE'
             ? await createEvent(ctx, payload)
             : await updateEvent(ctx, proposal.targetEventId as string, payload);
 
-        response = { requestId, action: proposal.action, event, deletedEventId: null };
+        response = {
+          requestId,
+          action: proposal.action,
+          event,
+          events: [event],
+          deletedEventId: null,
+          failures: [],
+        };
       }
 
       await markActionSucceeded(actionId, response.event?.id ?? response.deletedEventId);

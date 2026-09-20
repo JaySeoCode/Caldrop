@@ -93,16 +93,16 @@ export function Workspace({
     });
   }, [runAnalysis]);
 
-  const onConfirm = useCallback(async () => {
+  const onConfirm = useCallback(
+    async (eventIndexes?: number[]) => {
     if (!analysis) return;
     setPhase('confirming');
     setError(null);
     try {
-      const confirmed = await confirm(analysis.requestId);
+      const confirmed = await confirm(analysis.requestId, eventIndexes);
       setResult(confirmed);
-      setRecent(
-        confirmed.event ? { requestId: confirmed.requestId, title: confirmed.event.title } : null,
-      );
+      const first = confirmed.event ?? confirmed.events[0] ?? null;
+      setRecent(first ? { requestId: confirmed.requestId, title: first.title } : null);
       setPhase('done');
     } catch (cause) {
       setError(
@@ -110,7 +110,9 @@ export function Workspace({
       );
       setPhase('preview');
     }
-  }, [analysis]);
+    },
+    [analysis],
+  );
 
   const onCancel = useCallback(() => {
     if (analysis) void discard(analysis.requestId);
@@ -161,7 +163,10 @@ export function Workspace({
 
       {phase !== 'done' &&
       action &&
-      (action.action === 'CREATE' || action.action === 'UPDATE' || action.action === 'DELETE') &&
+      (action.action === 'CREATE' ||
+        action.action === 'CREATE_MANY' ||
+        action.action === 'UPDATE' ||
+        action.action === 'DELETE') &&
       analysis ? (
         <PreviewCard
           // A new proposal starts un-acknowledged, even if the card stays mounted.
@@ -169,6 +174,7 @@ export function Workspace({
           action={action}
           candidates={analysis.candidates}
           conflicts={analysis.conflicts}
+          eventConflicts={analysis.eventConflicts}
           timezone={analysis.timezone}
           busy={busy}
           onConfirm={onConfirm}

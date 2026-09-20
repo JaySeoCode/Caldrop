@@ -29,7 +29,9 @@ export function action(overrides: Partial<CalendarAction> = {}): CalendarAction 
       allDay: false,
       location: null,
       description: null,
+      recurrence: null,
     },
+    events: [],
     targetEventId: null,
     confidence: 0.9,
     inferredFields: [],
@@ -51,6 +53,7 @@ export function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
     htmlLink: null,
     status: 'confirmed',
     organizerSelf: true,
+    recurrence: null,
     canEdit: true,
     ...overrides,
   };

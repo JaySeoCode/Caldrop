@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ALLOWED_IMAGE_TYPES } from '@/lib/util/upload-constants';
+import { ALLOWED_IMAGE_TYPES, PDF_TYPE } from '@/lib/util/upload-constants';
 
 const root = path.resolve(__dirname, '..');
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
@@ -58,8 +58,10 @@ describe('Android share target', () => {
     expect(serviceWorker).toContain(`form.get('${file?.name}')`);
   });
 
-  it('accepts exactly the image types the server allows', () => {
-    expect([...(file?.accept ?? [])].sort()).toEqual([...ALLOWED_IMAGE_TYPES].sort());
+  it('accepts exactly the file types the server allows', () => {
+    expect([...(file?.accept ?? [])].sort()).toEqual(
+      [...ALLOWED_IMAGE_TYPES, PDF_TYPE].sort(),
+    );
   });
 
   it('parks the share where the page looks for it', () => {

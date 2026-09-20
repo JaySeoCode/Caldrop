@@ -38,9 +38,10 @@ describe('CalendarAction JSON Schema (OpenAI strict mode)', () => {
     }
   });
 
-  it('exposes exactly the five documented actions', () => {
+  it('exposes exactly the documented actions', () => {
     expect(CALENDAR_ACTIONS).toEqual([
       'CREATE',
+      'CREATE_MANY',
       'UPDATE',
       'DELETE',
       'NO_ACTION',
@@ -61,7 +62,9 @@ describe('CalendarAction validation', () => {
         allDay: false,
         location: '강남',
         description: null,
+        recurrence: null,
       },
+      events: [],
       targetEventId: null,
       confidence: 0.95,
       inferredFields: ['end'],
@@ -75,6 +78,7 @@ describe('CalendarAction validation', () => {
     const parsed = calendarActionSchema.safeParse({
       action: 'NEED_CLARIFICATION',
       event: null,
+      events: [],
       targetEventId: null,
       confidence: 0.4,
       inferredFields: [],

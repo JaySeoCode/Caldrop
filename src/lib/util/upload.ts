@@ -8,18 +8,25 @@
  * for the audit trail.
  */
 import { createHash } from 'node:crypto';
+import { PDFDocument } from 'pdf-lib';
 import { AppError } from '@/lib/util/errors';
 import {
   ALLOWED_IMAGE_TYPES,
   MAX_IMAGE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_PDF_PAGES,
   MAX_TEXT_LENGTH,
+  PDF_TYPE,
   type AllowedImageType,
 } from '@/lib/util/upload-constants';
 
 export {
   MAX_IMAGE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_PDF_PAGES,
   MAX_TEXT_LENGTH,
   ALLOWED_IMAGE_TYPES,
+  PDF_TYPE,
   type AllowedImageType,
 } from '@/lib/util/upload-constants';
 
@@ -118,4 +125,95 @@ export function validateClarifications(
     }
     return { question: validQuestion, answer: validateText(answer, 'clarification answer') };
   });
+}
+
+export interface ValidatedDocument {
+  dataUrl: string;
+  /** Sanitised, so a crafted name cannot travel into the model prompt. */
+  filename: string;
+  byteLength: number;
+  pageCount: number;
+  sha256: string;
+}
+
+/**
+ * Page count via a real parse, because page objects usually live inside
+ * compressed object streams where grepping the bytes would be wrong. A file
+ * that cannot be parsed is refused rather than guessed at: the cap exists to
+ * bound what one request costs, so an unknown count is not an acceptable
+ * answer.
+ */
+async function countPdfPages(bytes: Buffer): Promise<number> {
+  let pages: number;
+  try {
+    const document = await PDFDocument.load(bytes, {
+      // Encrypted-but-readable files still have a readable page tree; a truly
+      // unreadable one throws here and is refused.
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    // A truncated file can load and then fail on the page tree, so the count is
+    // taken inside the same guard.
+    pages = document.getPageCount();
+  } catch {
+    throw new AppError('INVALID_INPUT', 'That PDF could not be read. Try exporting it again.');
+  }
+
+  if (pages < 1) {
+    throw new AppError('INVALID_INPUT', 'That PDF has no pages.');
+  }
+  return pages;
+}
+
+/** True when the bytes really start a PDF (`%PDF-`). */
+export function isPdf(bytes: Uint8Array): boolean {
+  return startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d]);
+}
+
+function safeFilename(raw: string): string {
+  const base = raw.split(/[\\/]/).pop() ?? 'document.pdf';
+  const cleaned = base.replace(/[^\w.\- ]+/g, '_').slice(0, 80).trim();
+  return cleaned.toLowerCase().endsWith('.pdf') ? cleaned : `${cleaned || 'document'}.pdf`;
+}
+
+/**
+ * Same contract as `validateImageUpload`: the declared type only has to be the
+ * PDF type, and the header sniff is what actually decides. The bytes are never
+ * stored - they become a data URL for the model call and are dropped.
+ */
+export async function validatePdfUpload(file: File): Promise<ValidatedDocument> {
+  if (file.size === 0) {
+    throw new AppError('INVALID_INPUT', 'The uploaded file is empty.');
+  }
+  if (file.size > MAX_PDF_BYTES) {
+    throw new AppError(
+      'PAYLOAD_TOO_LARGE',
+      `PDFs must be ${MAX_PDF_BYTES / (1024 * 1024)}MB or smaller.`,
+    );
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  if (buffer.byteLength > MAX_PDF_BYTES) {
+    throw new AppError('PAYLOAD_TOO_LARGE', 'That PDF is too large.');
+  }
+  if (!isPdf(buffer)) {
+    throw new AppError('UNSUPPORTED_MEDIA_TYPE', 'That file is not a PDF.');
+  }
+
+  const pageCount = await countPdfPages(buffer);
+  if (pageCount > MAX_PDF_PAGES) {
+    throw new AppError(
+      'PAYLOAD_TOO_LARGE',
+      `PDFs must be ${MAX_PDF_PAGES} pages or fewer (this one has ${pageCount}). ` +
+        'Split it, or send just the pages with the schedule.',
+    );
+  }
+
+  return {
+    dataUrl: `data:${PDF_TYPE};base64,${buffer.toString('base64')}`,
+    filename: safeFilename(file.name || 'document.pdf'),
+    byteLength: buffer.byteLength,
+    pageCount,
+    sha256: createHash('sha256').update(buffer).digest('hex'),
+  };
 }

@@ -4,7 +4,7 @@
  * Browser-only. The payload is consumed exactly once - it is deleted as soon as
  * it is read - so a reload never re-analyses the same share.
  */
-import { ALLOWED_IMAGE_TYPES } from '@/lib/util/upload-constants';
+import { ALLOWED_IMAGE_TYPES, PDF_TYPE } from '@/lib/util/upload-constants';
 
 const SHARE_CACHE = 'caldrop-share-v1';
 /** A share older than this is treated as abandoned (e.g. the user never signed in). */
@@ -26,7 +26,10 @@ const EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/gif': 'gif',
+  [PDF_TYPE]: 'pdf',
 };
+
+const SHAREABLE_TYPES: readonly string[] = [...ALLOWED_IMAGE_TYPES, PDF_TYPE];
 
 export async function takeSharedPayload(): Promise<SharedPayload | null> {
   if (typeof window === 'undefined' || !('caches' in window)) return null;
@@ -52,7 +55,7 @@ export async function takeSharedPayload(): Promise<SharedPayload | null> {
 
   if (meta.hasImage && imageResponse) {
     const blob = await imageResponse.blob();
-    if ((ALLOWED_IMAGE_TYPES as readonly string[]).includes(blob.type)) {
+    if (SHAREABLE_TYPES.includes(blob.type)) {
       payload.image = new File([blob], `shared.${EXTENSIONS[blob.type] ?? 'png'}`, {
         type: blob.type,
       });

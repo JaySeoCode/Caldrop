@@ -5,11 +5,15 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { decryptSecret, encryptSecret, safeEqual } from '@/lib/util/crypto';
+import { PDFDocument } from 'pdf-lib';
 import {
   MAX_CLARIFICATION_ROUNDS,
+  MAX_PDF_BYTES,
+  MAX_PDF_PAGES,
   sniffImageType,
   validateClarifications,
   validateImageUpload,
+  validatePdfUpload,
   validateText,
 } from '@/lib/util/upload';
 import { consume, resetRateLimits } from '@/lib/util/rate-limit';
@@ -153,5 +157,68 @@ describe('clarification history validation', () => {
 
   it('treats a missing field as no history', () => {
     expect(validateClarifications(undefined)).toEqual([]);
+  });
+});
+
+describe('PDF upload validation', () => {
+  const PDF_HEADER = Array.from(Buffer.from('%PDF-1.7\n'));
+
+  function pdf(bytes: number[], name = 'syllabus.pdf', type = 'application/pdf'): File {
+    return new File([new Uint8Array(bytes)], name, { type });
+  }
+
+  /** A structurally valid PDF, so the page count comes from a real parse. */
+  async function realPdf(pages: number, name = 'syllabus.pdf'): Promise<File> {
+    const document = await PDFDocument.create();
+    for (let i = 0; i < pages; i += 1) document.addPage();
+    const bytes = await document.save();
+    return new File([Buffer.from(bytes)], name, { type: 'application/pdf' });
+  }
+
+  it('accepts a real PDF and keeps a digest, not the bytes', async () => {
+    const validated = await validatePdfUpload(await realPdf(3));
+    expect(validated.dataUrl.startsWith('data:application/pdf;base64,')).toBe(true);
+    expect(validated.filename).toBe('syllabus.pdf');
+    expect(validated.pageCount).toBe(3);
+    expect(validated.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('accepts a PDF exactly at the page cap', async () => {
+    const validated = await validatePdfUpload(await realPdf(MAX_PDF_PAGES));
+    expect(validated.pageCount).toBe(MAX_PDF_PAGES);
+  });
+
+  it('rejects a PDF with one page too many, and says how many it has', async () => {
+    await expect(validatePdfUpload(await realPdf(MAX_PDF_PAGES + 1))).rejects.toMatchObject({
+      code: 'PAYLOAD_TOO_LARGE',
+      message: expect.stringContaining(String(MAX_PDF_PAGES + 1)),
+    });
+  });
+
+  it('refuses a PDF whose structure cannot be parsed rather than guessing', async () => {
+    // Correct header, nothing behind it: the page count is unknowable.
+    await expect(validatePdfUpload(pdf(PDF_HEADER))).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    });
+  });
+
+  it('rejects a non-PDF that claims to be one', async () => {
+    const payload = Array.from(Buffer.from('<?php system($_GET["c"]); ?>'));
+    await expect(validatePdfUpload(pdf(payload))).rejects.toMatchObject({
+      code: 'UNSUPPORTED_MEDIA_TYPE',
+    });
+  });
+
+  it('rejects an oversized PDF without reading it', async () => {
+    const big = pdf(PDF_HEADER, 'big.pdf');
+    Object.defineProperty(big, 'size', { value: MAX_PDF_BYTES + 1 });
+    await expect(validatePdfUpload(big)).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+  });
+
+  it('sanitises a hostile file name before it can reach the model', async () => {
+    const validated = await validatePdfUpload(
+      await realPdf(1, '../../etc/pass<<<UNTRUSTED>>>wd.pdf'),
+    );
+    expect(validated.filename).toBe('pass_UNTRUSTED_wd.pdf');
   });
 });

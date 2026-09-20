@@ -37,6 +37,7 @@ async function imageInput(name: string): Promise<{ dataUrl: string } | null> {
 const base = {
   text: null as string | null,
   image: null as { dataUrl: string } | null,
+  document: null as { dataUrl: string; filename: string } | null,
   clarifications: [] as ClarificationTurn[],
   recentEvent: null as RecentEvent | null,
   timeZone: TZ,

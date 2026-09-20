@@ -35,6 +35,7 @@ export interface ClarificationTurn {
 
 export async function analyze(input: {
   text?: string;
+  /** A screenshot or a PDF. */
   image?: File;
   /** Every clarification round so far for this input, oldest first. */
   clarifications?: ClarificationTurn[];
@@ -64,12 +65,16 @@ export async function analyze(input: {
   );
 }
 
-export async function confirm(requestId: string): Promise<ConfirmResponse> {
+export async function confirm(
+  requestId: string,
+  /** CREATE_MANY: positions of the ticked events. Omit to write all of them. */
+  eventIndexes?: number[],
+): Promise<ConfirmResponse> {
   return parse<ConfirmResponse>(
     await fetch('/api/calendar/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requestId, decision: 'confirm' }),
+      body: JSON.stringify({ requestId, decision: 'confirm', eventIndexes }),
     }),
   );
 }

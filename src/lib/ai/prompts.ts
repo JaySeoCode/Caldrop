@@ -11,6 +11,7 @@
  *     model is told, in both passes, that anything imperative inside them is
  *     content to be reported - not a command to follow.
  */
+import { MAX_EVENTS_PER_PROPOSAL } from '@/schemas/calendar-action';
 import type { CalendarEvent } from '@/types';
 
 /** Default duration used when an end time must be inferred. */
@@ -67,6 +68,12 @@ RULES
 - normalizedInput: a faithful plain-text transcription of the schedule-relevant
   content: what, when, where, with whom. Transcribe, do not embellish. Never add
   a person, place, date or time that is not present in the input.
+  For a document that carries MANY commitments (a course syllabus, a schedule
+  table, an itinerary), transcribe them as one line per commitment, in the order
+  they appear, each with its own date/time, and mark a repeating one as such:
+  "Weekly: Database Systems, Tue+Thu 10:30-11:45, room 302, Mar 3 - Jun 12"
+  "Once: Midterm, Apr 21 10:30-12:00, room 302"
+  Keep every line; do not summarise the document.
 - searchKeywords: words likely to appear in the TITLE of an existing event, for
   MODIFY_LIKE / DELETE_LIKE (e.g. "회의", "meeting", "치과", "dinner").
 
@@ -95,7 +102,12 @@ OUTPUT RULES
 - All datetimes: ISO-8601 with an explicit offset in user_timezone, e.g.
   2026-09-18T19:00:00+09:00. Never emit a bare local time or a "Z" time that is
   not actually UTC.
-- CREATE: a new commitment. event required, targetEventId null.
+- CREATE: one new commitment. event required, events empty, targetEventId null.
+- CREATE_MANY: several new commitments read out of one input, typically a
+  syllabus, a schedule table or an itinerary. events required (at most
+  ${MAX_EVENTS_PER_PROPOSAL}), event null, targetEventId null. The user picks
+  which of them to keep, so propose each distinct commitment separately rather
+  than merging unrelated ones.
 - UPDATE: a change to one of the provided candidate events. targetEventId MUST
   be copied character-for-character from a candidate. The event payload must be
   the COMPLETE post-change event: carry over title, location and description
@@ -106,11 +118,27 @@ OUTPUT RULES
 - NEED_CLARIFICATION: a required fact is missing or ambiguous. event and
   targetEventId null, and missingFields lists what you need.
 
+REPEATING EVENTS
+- A commitment that happens on a fixed weekly pattern ("every Tue and Thu until
+  June 12") is ONE event with a recurrence rule, not one event per week. Set
+  start/end to the FIRST occurrence and put the pattern in "recurrence".
+- recurrence must be bounded: always UNTIL (UTC, e.g. 20260612T145959Z) or
+  COUNT, never both, never open-ended. UNTIL is the end of the last day the
+  series runs, converted to UTC.
+- Use only FREQ, INTERVAL, BYDAY (WEEKLY only), UNTIL, COUNT. Anything else is
+  rejected and the proposal is lost.
+- Weekly classes on two weekdays = one event with BYDAY=TU,TH; a midterm on a
+  single date is a separate, non-repeating event.
+- Whenever you set recurrence, add "recurrence" to inferredFields if the input
+  did not state the pattern explicitly.
+
 DECISION RULES (in priority order)
 1. Never invent a person, place, date, time or event id that is not in the
    input or in the candidate events. If a fact is not there, it is missing.
 2. If the DATE cannot be determined with confidence -> NEED_CLARIFICATION with
-   "date" in missingFields.
+   "date" in missingFields. For CREATE_MANY, drop the individual commitments
+   whose date or time you cannot determine and keep the rest; only ask when the
+   whole document is unusable.
 3. If the START TIME cannot be determined and cannot be reasonably inferred ->
    NEED_CLARIFICATION with "start_time" in missingFields. Do not default to an
    arbitrary hour. A named meal or activity may imply a time only when the
@@ -131,7 +159,8 @@ DECISION RULES (in priority order)
    matters. An existing event at the same time is NOT a reason to refuse a
    CREATE - the user is shown the conflict and decides.
 9. Write "explanation" in the same language as the input, in one or two
-   sentences, saying what you decided and what you inferred.
+   sentences, saying what you decided and what you inferred. For CREATE_MANY,
+   say how many events you found and what you skipped.
 
 ${INJECTION_GUARD}`;
 }
@@ -201,6 +230,7 @@ export function decisionUserPrompt(input: {
   normalizedInput: string;
   intentType: string;
   candidates: CalendarEvent[];
+  fromDocument: boolean;
   clarifications: Array<{ question: string; answer: string }>;
   recentEvent: { action: string; event: CalendarEvent } | null;
   injectionSuspected: boolean;
@@ -217,6 +247,14 @@ export function decisionUserPrompt(input: {
 
   if (input.recentEvent) {
     sections.push(renderRecentEvent(input.recentEvent));
+  }
+
+  if (input.fromDocument) {
+    sections.push(
+      'The input was a PDF document. If the reading above lists several distinct',
+      'commitments, use CREATE_MANY and propose each of them; collapse a fixed',
+      'weekly pattern into one recurring event.',
+    );
   }
 
   sections.push(renderCandidateEvents(input.candidates));

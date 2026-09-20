@@ -8,6 +8,8 @@ export async function recordAction(input: {
   userId: string;
   action: CalendarActionKind;
   payload: unknown;
+  /** Position within a multi-event proposal; 0 for a single-event request. */
+  eventIndex?: number;
 }): Promise<string> {
   const { data, error } = await getServiceClient()
     .from('calendar_actions')
@@ -16,13 +18,15 @@ export async function recordAction(input: {
       user_id: input.userId,
       action: input.action,
       payload: input.payload,
+      event_index: input.eventIndex ?? 0,
       status: 'pending',
     })
     .select('id')
     .single<{ id: string }>();
 
   if (error || !data) {
-    // A unique violation on request_id means this request was already confirmed.
+    // A unique violation on (request_id, event_index) means this exact event of
+    // this request was already written.
     if (error?.code === '23505') {
       throw new AppError('CONFLICT', 'This request has already been confirmed.');
     }
@@ -63,6 +67,10 @@ export async function getSucceededEventId(
     .eq('user_id', userId)
     .eq('status', 'succeeded')
     .in('action', ['CREATE', 'UPDATE'])
+    // A multi-event request has several rows; the first one written is the one
+    // a follow-up ("move it to 4") is most likely to mean.
+    .order('event_index', { ascending: true })
+    .limit(1)
     .maybeSingle<{ google_event_id: string | null }>();
 
   if (error) {

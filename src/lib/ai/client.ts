@@ -15,12 +15,19 @@ export interface ImageInput {
   dataUrl: string;
 }
 
+export interface DocumentInput {
+  /** data: URL of a PDF - the bytes never leave the server except in this request. */
+  dataUrl: string;
+  filename: string;
+}
+
 export interface StructuredRequest {
   /** System-level instructions. Never contains user content. */
   instructions: string;
   /** User-role content. Untrusted; always delimited by the caller. */
   text: string;
   image?: ImageInput;
+  document?: DocumentInput;
   schemaName: string;
   jsonSchema: Record<string, unknown>;
   maxOutputTokens?: number;
@@ -79,7 +86,8 @@ function toAiError(error: unknown): AppError {
 
 type UserContent =
   | { type: 'input_text'; text: string }
-  | { type: 'input_image'; image_url: string; detail: 'auto' };
+  | { type: 'input_image'; image_url: string; detail: 'auto' }
+  | { type: 'input_file'; filename: string; file_data: string };
 
 export function createOpenAIModel(model = serverEnv.openaiModel): StructuredModel {
   return {
@@ -88,6 +96,13 @@ export function createOpenAIModel(model = serverEnv.openaiModel): StructuredMode
       const content: UserContent[] = [{ type: 'input_text', text: request.text }];
       if (request.image) {
         content.push({ type: 'input_image', image_url: request.image.dataUrl, detail: 'auto' });
+      }
+      if (request.document) {
+        content.push({
+          type: 'input_file',
+          filename: request.document.filename,
+          file_data: request.document.dataUrl,
+        });
       }
 
       let response;
