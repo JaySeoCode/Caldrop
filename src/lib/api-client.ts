@@ -2,7 +2,7 @@
  * Browser-side API helpers. Client code only ever talks to our own routes -
  * it has no OpenAI key and no Google token, by construction.
  */
-import type { AnalyzeResponse, ConfirmResponse } from '@/types';
+import type { AnalyzeResponse, BackgroundResponse, ConfirmResponse } from '@/types';
 
 interface ApiErrorBody {
   error?: { code?: string; message?: string };
@@ -41,9 +41,16 @@ export async function analyze(input: {
   clarifications?: ClarificationTurn[];
   /** The last confirmed request, so "move it to 4" can resolve "it". */
   followUpOf?: string | null;
-}): Promise<AnalyzeResponse> {
+  /**
+   * Hand the work to the server and get the result as a notification instead of
+   * waiting for it. The server refuses it (and answers normally) when this user
+   * has no subscribed browser.
+   */
+  background?: boolean;
+}): Promise<AnalyzeResponse | BackgroundResponse> {
   const clarifications = input.clarifications?.length ? input.clarifications : undefined;
   const followUpOf = input.followUpOf ?? undefined;
+  const background = input.background ? true : undefined;
 
   if (input.image) {
     const form = new FormData();
@@ -51,18 +58,26 @@ export async function analyze(input: {
     if (input.text) form.set('text', input.text);
     if (clarifications) form.set('clarifications', JSON.stringify(clarifications));
     if (followUpOf) form.set('followUpOf', followUpOf);
-    return parse<AnalyzeResponse>(
+    if (background) form.set('background', 'true');
+    return parse<AnalyzeResponse | BackgroundResponse>(
       await fetch('/api/ai/analyze', { method: 'POST', body: form }),
     );
   }
 
-  return parse<AnalyzeResponse>(
+  return parse<AnalyzeResponse | BackgroundResponse>(
     await fetch('/api/ai/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: input.text, clarifications, followUpOf }),
+      body: JSON.stringify({ text: input.text, clarifications, followUpOf, background }),
     }),
   );
+}
+
+/** True when the server took the job and will notify instead of answering. */
+export function isBackground(
+  response: AnalyzeResponse | BackgroundResponse,
+): response is BackgroundResponse {
+  return 'background' in response && response.background;
 }
 
 export async function confirm(

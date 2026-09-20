@@ -49,6 +49,12 @@ export interface AnalyzeResponse {
   injectionDetected: boolean;
 }
 
+/** Reply when the analysis was accepted and the result arrives as a notification. */
+export interface BackgroundResponse {
+  requestId: string;
+  background: true;
+}
+
 /** One event of a multi-event proposal that could not be written. */
 export interface ConfirmFailure {
   index: number;

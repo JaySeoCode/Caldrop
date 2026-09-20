@@ -57,3 +57,86 @@ self.addEventListener('fetch', (event) => {
     })(),
   );
 });
+
+// ---------------------------------------------------------------------------
+// Result notifications
+//
+// When the user hands CalDrop an input and leaves, the analysis finishes on the
+// server and arrives here as a push. The notification is the only place the
+// user sees what was written, so it carries the events themselves and an Undo
+// that removes exactly what this request created.
+// ---------------------------------------------------------------------------
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {};
+  }
+
+  const title = payload.title || 'CalDrop';
+  const requestId = payload.requestId || null;
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: payload.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      // One notification per request, so a retry replaces rather than stacks.
+      tag: requestId || 'caldrop-result',
+      renotify: true,
+      data: { requestId, needsAttention: Boolean(payload.needsAttention) },
+      actions: requestId ? [{ action: 'undo', title: 'Undo' }] : [],
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  const data = event.notification.data || {};
+  event.notification.close();
+
+  if (event.action === 'undo' && data.requestId) {
+    event.waitUntil(
+      (async () => {
+        let ok = false;
+        try {
+          const response = await fetch('/api/calendar/undo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ requestId: data.requestId }),
+          });
+          ok = response.ok;
+        } catch {
+          ok = false;
+        }
+
+        await self.registration.showNotification(
+          ok ? 'Removed from your calendar' : 'Could not undo',
+          {
+            body: ok
+              ? 'What CalDrop just added has been deleted.'
+              : 'Open CalDrop, or remove it in Google Calendar.',
+            icon: '/icons/icon-192.png',
+            badge: '/icons/icon-192.png',
+            tag: `${data.requestId}-undo`,
+          },
+        );
+      })(),
+    );
+    return;
+  }
+
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const existing = windows.find((client) => client.url.startsWith(self.location.origin));
+      if (existing) {
+        await existing.focus();
+        return;
+      }
+      await self.clients.openWindow('/');
+    })(),
+  );
+});

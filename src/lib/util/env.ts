@@ -58,6 +58,21 @@ export const serverEnv = {
   get defaultTimezone() {
     return optional('DEFAULT_TIMEZONE', 'Asia/Seoul');
   },
+  /**
+   * Web push credentials. Optional: without them the app simply keeps the
+   * foreground flow and never offers notifications.
+   */
+  get vapid() {
+    return {
+      publicKey: optional('VAPID_PUBLIC_KEY', ''),
+      privateKey: optional('VAPID_PRIVATE_KEY', ''),
+      subject: optional('VAPID_SUBJECT', 'mailto:noreply@caldrop.app'),
+    };
+  },
+  get pushEnabled() {
+    const { publicKey, privateKey } = serverEnv.vapid;
+    return publicKey !== '' && privateKey !== '';
+  },
   get enableDelete() {
     return flag('ENABLE_DELETE', false);
   },

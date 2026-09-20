@@ -28,8 +28,14 @@ Text / screenshot / PDF  ->  AI analysis  ->  Preview  ->  You confirm  ->  Goog
   in the preview before you agree to it.
 - **Asks instead of guessing.** Missing date or time produces
   `NEED_CLARIFICATION`, never an invented event.
-- **Never writes without confirmation.** Analysis and writing are different API
-  routes, and the write route takes a request id - not an event payload.
+- **Never writes without confirmation** in the foreground flow. Analysis and
+  writing are different API routes, and the write route takes a request id -
+  not an event payload.
+- **Or hand it over and leave.** With notifications turned on, an input is
+  analysed server-side after the response, the events are added, and a push
+  notification lists exactly what was written - with an **Undo** that deletes
+  what that request created. This trades the preview for one tap; it is opt-in
+  per browser and requires notification permission.
 
 ---
 
@@ -194,7 +200,21 @@ cp .env.example .env.local
 
 While the consent screen is in *Testing*, add yourself under **Test users**.
 
-### 3. Supabase
+### 3. Web push (optional)
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Put the pair in `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`, repeat the public key
+in `NEXT_PUBLIC_VAPID_PUBLIC_KEY` (the browser needs it to subscribe) and set
+`VAPID_SUBJECT` to a `mailto:` you own. Without these the toggle never appears
+and every analysis stays in the foreground.
+
+Android Chrome delivers these to an installed PWA. Desktop Chrome and Edge work
+too; iOS requires the app to be added to the Home Screen.
+
+### 4. Supabase
 
 Create a project and run `supabase/schema.sql` in the SQL editor. Copy the
 project URL, anon key and service role key into `.env.local`.
@@ -203,14 +223,14 @@ The file is idempotent: re-run it after pulling changes. Multi-event proposals
 need the `event_index` column and the `(request_id, event_index)` unique index
 it adds, and PDF input needs the `pdf` value on the `input_type` enum.
 
-### 4. Secrets
+### 5. Secrets
 
 ```bash
 openssl rand -base64 32   # NEXTAUTH_SECRET
 openssl rand -base64 32   # TOKEN_ENCRYPTION_KEY (must decode to 32 bytes)
 ```
 
-### 5. Run
+### 6. Run
 
 ```bash
 npm run dev          # http://localhost:3000

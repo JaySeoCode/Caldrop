@@ -1,5 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { requireSession } from '@/lib/auth/session';
+import { applyProposal } from '@/lib/calendar/apply';
+import { countSubscriptions } from '@/lib/db/push';
+import { buildNotification } from '@/lib/push/message';
+import { sendNotification } from '@/lib/push/send';
 import { analyzeInput, type CalendarPort, type RecentEvent } from '@/lib/ai/analyze';
 import { createOpenAIModel } from '@/lib/ai/client';
 import { calendarContextFor } from '@/lib/calendar/context';
@@ -23,7 +28,7 @@ import {
   PDF_TYPE,
   type ValidatedDocument,
 } from '@/lib/util/upload';
-import type { AnalyzeResponse, InputType } from '@/types';
+import type { AnalyzeResponse, BackgroundResponse, CalendarEvent, ConfirmFailure, InputType } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,6 +37,10 @@ export const maxDuration = 60;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A confirmed request older than this is no longer offered as "it" / "그거". */
 const RECENT_CONTEXT_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+function wantsBackground(raw: unknown): boolean {
+  return raw === true || raw === 'true' || raw === '1';
+}
 
 function parseFollowUpOf(raw: unknown): string | null {
   if (raw === undefined || raw === null || raw === '') return null;
@@ -90,6 +99,102 @@ async function loadRecentEvent(
  * never create, update or delete one. The proposal is stored server-side and
  * only /api/calendar/confirm can act on it.
  */
+/**
+ * Analyse, write, notify - with nobody watching.
+ *
+ * Every failure here ends in a notification too: a background job that dies
+ * quietly would leave the user believing their input was handled.
+ */
+async function runInBackground(job: {
+  session: { id: string; timeZone: string };
+  requestId: string;
+  ctx: CalendarContext;
+  calendar: CalendarPort;
+  input: {
+    text: string | null;
+    image: { dataUrl: string } | null;
+    document: { dataUrl: string; filename: string } | null;
+    clarifications: ReturnType<typeof validateClarifications>;
+    recentEvent: RecentEvent | null;
+  };
+}): Promise<void> {
+  const { session, requestId, ctx, calendar, input } = job;
+  try {
+    const outcome = await analyzeInput(
+      { model: createOpenAIModel(), calendar },
+      {
+        ...input,
+        timeZone: session.timeZone,
+        now: new Date(),
+        deleteEnabled: serverEnv.enableDelete,
+      },
+    );
+
+    await completeRequest(requestId, {
+      action: outcome.action,
+      candidateEventIds: outcome.candidates.map((candidate) => candidate.id),
+      model: outcome.model,
+    });
+
+    const writable =
+      outcome.action.action === 'CREATE' ||
+      outcome.action.action === 'CREATE_MANY' ||
+      outcome.action.action === 'UPDATE' ||
+      outcome.action.action === 'DELETE';
+
+    let written: CalendarEvent[] = [];
+    let failures: ConfirmFailure[] = [];
+
+    if (writable) {
+      try {
+        const result = await applyProposal({
+          ctx,
+          userId: session.id,
+          requestId,
+          proposal: outcome.action,
+          candidateEventIds: outcome.candidates.map((candidate) => candidate.id),
+          timeZone: session.timeZone,
+        });
+        written = result.events;
+        failures = result.failures;
+      } catch (error) {
+        failures = [
+          {
+            index: 0,
+            title: outcome.action.event?.title ?? 'This input',
+            message:
+              error instanceof AppError
+                ? error.message
+                : 'Google Calendar refused this event.',
+          },
+        ];
+      }
+    }
+
+    await sendNotification(
+      session.id,
+      buildNotification({
+        action: outcome.action,
+        written,
+        failures,
+        requestId,
+        timeZone: session.timeZone,
+      }),
+    );
+  } catch (error) {
+    await failRequest(
+      requestId,
+      error instanceof Error ? error.message : 'unknown error',
+    ).catch(() => undefined);
+    await sendNotification(session.id, {
+      title: 'CalDrop could not read that',
+      body: error instanceof AppError ? error.message : 'Open the app and try again.',
+      requestId: null,
+      needsAttention: true,
+    });
+  }
+}
+
 export async function POST(request: NextRequest) {
   let requestId: string | null = null;
 
@@ -103,6 +208,7 @@ export async function POST(request: NextRequest) {
     let followUpOf: string | null = null;
     let image: { dataUrl: string; sha256: string } | null = null;
     let document: ValidatedDocument | null = null;
+    let background = false;
 
     if (contentType.includes('multipart/form-data')) {
       const form = await request.formData();
@@ -122,15 +228,18 @@ export async function POST(request: NextRequest) {
       if (typeof rawText === 'string' && rawText.trim()) text = validateText(rawText);
       clarifications = parseClarificationsField(form.get('clarifications'));
       followUpOf = parseFollowUpOf(form.get('followUpOf'));
+      background = wantsBackground(form.get('background'));
     } else if (contentType.includes('application/json')) {
       const body = (await request.json()) as {
         text?: unknown;
         clarifications?: unknown;
         followUpOf?: unknown;
+        background?: unknown;
       };
       if (body.text !== undefined) text = validateText(body.text);
       clarifications = validateClarifications(body.clarifications);
       followUpOf = parseFollowUpOf(body.followUpOf);
+      background = wantsBackground(body.background);
     } else {
       throw new AppError('UNSUPPORTED_MEDIA_TYPE', 'Send multipart/form-data or application/json.');
     }
@@ -159,6 +268,29 @@ export async function POST(request: NextRequest) {
         findConflicts(ctx, start, end, excludeEventId),
     };
     const recentEvent = followUpOf ? await loadRecentEvent(followUpOf, session.id, ctx) : null;
+
+    // Background mode: answer now, finish the work after the response, and tell
+    // the user what happened with a notification. Only offered when this user
+    // actually has a subscribed browser - otherwise the result would vanish.
+    if (background && serverEnv.pushEnabled && (await countSubscriptions(session.id)) > 0) {
+      const job = runInBackground({
+        session: { id: session.id, timeZone: session.timezone },
+        requestId,
+        ctx,
+        calendar,
+        input: {
+          text,
+          image: image ? { dataUrl: image.dataUrl } : null,
+          document: document ? { dataUrl: document.dataUrl, filename: document.filename } : null,
+          clarifications,
+          recentEvent,
+        },
+      });
+      waitUntil(job);
+      return NextResponse.json({ requestId, background: true } satisfies BackgroundResponse, {
+        status: 202,
+      });
+    }
 
     const outcome = await analyzeInput(
       { model: createOpenAIModel(), calendar },

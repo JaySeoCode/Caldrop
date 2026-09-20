@@ -5,7 +5,16 @@ import { ClarificationCard } from '@/components/ClarificationCard';
 import { InputCard } from '@/components/InputCard';
 import { PreviewCard } from '@/components/PreviewCard';
 import { ResultCard } from '@/components/ResultCard';
-import { ApiError, analyze, confirm, discard, type ClarificationTurn } from '@/lib/api-client';
+import {
+  ApiError,
+  analyze,
+  confirm,
+  discard,
+  isBackground,
+  type ClarificationTurn,
+} from '@/lib/api-client';
+import { NotifyToggle } from '@/components/NotifyToggle';
+import { readPushState, type PushState } from '@/lib/push-client';
 import { takeSharedPayload, type SharedPayload } from '@/lib/shared-inbox';
 import type { AnalyzeResponse, ConfirmResponse } from '@/types';
 
@@ -40,6 +49,14 @@ export function Workspace({
   // The last confirmed change; the next input may refer to it ("move it to 4").
   // Survives reset() on purpose - it is cleared explicitly or replaced.
   const [recent, setRecent] = useState<{ requestId: string; title: string } | null>(null);
+  // Whether this browser is subscribed to result notifications.
+  const [push, setPush] = useState<PushState>('off');
+  // Set after a hand-off, so the user can see their input was taken.
+  const [handedOff, setHandedOff] = useState(0);
+
+  useEffect(() => {
+    void readPushState().then(setPush);
+  }, []);
   // Content that arrived through the Android share sheet, shown in the input card.
   const [shared, setShared] = useState<SharedPayload | null>(null);
 
@@ -57,8 +74,26 @@ export function Workspace({
     async (input: PendingInput, clarifications: ClarificationTurn[], followUpOf: string | null) => {
       setPhase('analyzing');
       setError(null);
+      const notify = push === 'on';
       try {
-        const response = await analyze({ ...input, clarifications, followUpOf });
+        const response = await analyze({
+          ...input,
+          clarifications,
+          followUpOf,
+          // A clarification round is a conversation; it stays in the app.
+          background: notify && clarifications.length === 0,
+        });
+
+        if (isBackground(response)) {
+          // The server owns it now: clear the card and let the user carry on.
+          setHandedOff((count) => count + 1);
+          setPending(null);
+          setTurns([]);
+          setShared(null);
+          setPhase('idle');
+          return;
+        }
+
         setAnalysis(response);
         setPending(input);
         setTurns(clarifications);
@@ -68,7 +103,7 @@ export function Workspace({
         setPhase('idle');
       }
     },
-    [],
+    [push],
   );
 
   // Pick up a share-sheet hand-off. Checked on every mount (not only when
@@ -209,6 +244,12 @@ export function Workspace({
         </p>
       ) : null}
 
+      {handedOff > 0 && phase === 'idle' ? (
+        <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Working on it. You can close CalDrop - the result arrives as a notification.
+        </p>
+      ) : null}
+
       {phase === 'idle' || phase === 'analyzing' ? (
         <InputCard
           // Remount when a new share arrives so the card shows its content.
@@ -217,6 +258,10 @@ export function Workspace({
           initial={shared}
           onAnalyze={(input) => void runAnalysis(input, [], recent?.requestId ?? null)}
         />
+      ) : null}
+
+      {phase === 'idle' || phase === 'analyzing' ? (
+        <NotifyToggle state={push} busy={busy} onChange={setPush} />
       ) : null}
 
       {!deleteEnabled ? (

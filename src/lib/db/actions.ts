@@ -78,3 +78,40 @@ export async function getSucceededEventId(
   }
   return data?.google_event_id ?? null;
 }
+
+export interface WrittenEventRecord {
+  id: string;
+  googleEventId: string;
+}
+
+/**
+ * Events this request actually created and that have not been taken back yet.
+ * Scoped to the owner, so an undo can never reach someone else's write.
+ */
+export async function listUndoableWrites(
+  requestId: string,
+  userId: string,
+): Promise<WrittenEventRecord[]> {
+  const { data, error } = await getServiceClient()
+    .from('calendar_actions')
+    .select('id, google_event_id')
+    .eq('request_id', requestId)
+    .eq('user_id', userId)
+    .eq('action', 'CREATE')
+    .eq('status', 'succeeded')
+    .is('undone_at', null)
+    .not('google_event_id', 'is', null)
+    .returns<Array<{ id: string; google_event_id: string }>>();
+
+  if (error) {
+    throw new AppError('INTERNAL', 'Could not load what was written.', { cause: error.message });
+  }
+  return (data ?? []).map((row) => ({ id: row.id, googleEventId: row.google_event_id }));
+}
+
+export async function markActionUndone(actionId: string): Promise<void> {
+  await getServiceClient()
+    .from('calendar_actions')
+    .update({ undone_at: new Date().toISOString() })
+    .eq('id', actionId);
+}

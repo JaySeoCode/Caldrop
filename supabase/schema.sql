@@ -102,6 +102,9 @@ create table if not exists public.calendar_actions (
 -- Added later, for tables created before CREATE_MANY existed.
 alter table public.calendar_actions
   add column if not exists event_index integer not null default 0;
+-- Set when the user takes an auto-added event back from the notification.
+alter table public.calendar_actions
+  add column if not exists undone_at timestamptz;
 
 create index if not exists calendar_actions_user_created_idx
   on public.calendar_actions (user_id, created_at desc);
@@ -110,6 +113,20 @@ create index if not exists calendar_actions_user_created_idx
 drop index if exists public.calendar_actions_request_unique;
 create unique index if not exists calendar_actions_request_event_unique
   on public.calendar_actions (request_id, event_index);
+
+-- --------------------------------------------------------------------------
+-- push_subscriptions : one row per browser that opted into notifications
+-- --------------------------------------------------------------------------
+create table if not exists public.push_subscriptions (
+  endpoint    text primary key,
+  user_id     uuid not null references public.users (id) on delete cascade,
+  p256dh      text not null,
+  auth        text not null,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists push_subscriptions_user_idx
+  on public.push_subscriptions (user_id);
 
 -- --------------------------------------------------------------------------
 -- updated_at triggers
