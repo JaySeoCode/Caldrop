@@ -27,6 +27,12 @@ create table if not exists public.users (
   updated_at   timestamptz not null default now()
 );
 
+-- Free trial: 7 days from the first sign-in. The upsert on sign-in never
+-- writes this column, so signing in again does not restart the trial.
+-- (Users that existed before this column get 7 days from when it was added.)
+alter table public.users
+  add column if not exists trial_ends_at timestamptz not null default (now() + interval '7 days');
+
 -- --------------------------------------------------------------------------
 -- google_accounts : one row per user, holds the encrypted refresh token
 -- --------------------------------------------------------------------------
@@ -129,6 +135,38 @@ create index if not exists push_subscriptions_user_idx
   on public.push_subscriptions (user_id);
 
 -- --------------------------------------------------------------------------
+-- play_subscriptions : Google Play purchases, one row per purchase token.
+-- Play is the source of truth; this is a cache of what its API last said.
+-- The primary key makes a token claimable by exactly one account.
+-- --------------------------------------------------------------------------
+create table if not exists public.play_subscriptions (
+  purchase_token        text primary key,
+  user_id               uuid not null references public.users (id) on delete cascade,
+  product_id            text not null,
+  state                 text not null,
+  expires_at            timestamptz,
+  acknowledged          boolean not null default false,
+  linked_purchase_token text,
+  test_purchase         boolean not null default false,
+  checked_at            timestamptz not null default now(),
+  created_at            timestamptz not null default now()
+);
+
+create index if not exists play_subscriptions_user_idx
+  on public.play_subscriptions (user_id, expires_at desc);
+
+-- --------------------------------------------------------------------------
+-- deleted_accounts : the only trace of a deleted account. A keyed hash of the
+-- Google id (not reversible without the server key) and the trial end, so
+-- re-registering cannot restart the free trial. Purged after one year.
+-- --------------------------------------------------------------------------
+create table if not exists public.deleted_accounts (
+  google_sub_hash text primary key,
+  trial_ends_at   timestamptz not null,
+  deleted_at      timestamptz not null default now()
+);
+
+-- --------------------------------------------------------------------------
 -- updated_at triggers
 -- --------------------------------------------------------------------------
 create or replace function public.touch_updated_at()
@@ -156,8 +194,14 @@ alter table public.users             enable row level security;
 alter table public.google_accounts   enable row level security;
 alter table public.calendar_requests enable row level security;
 alter table public.calendar_actions  enable row level security;
+alter table public.push_subscriptions enable row level security;
+alter table public.play_subscriptions enable row level security;
+alter table public.deleted_accounts   enable row level security;
 
 revoke all on public.users             from anon, authenticated;
 revoke all on public.google_accounts   from anon, authenticated;
 revoke all on public.calendar_requests from anon, authenticated;
 revoke all on public.calendar_actions  from anon, authenticated;
+revoke all on public.push_subscriptions from anon, authenticated;
+revoke all on public.play_subscriptions from anon, authenticated;
+revoke all on public.deleted_accounts   from anon, authenticated;

@@ -28,7 +28,9 @@ export function Header({ user }: HeaderProps) {
     <header className="flex items-center justify-between text-sm">
       <span className="chip">{user.timezone}</span>
       <div className="flex items-center gap-3">
-        <span className="text-ink-soft">{user.email}</span>
+        <a href="/account" className="text-ink-soft underline-offset-4 hover:text-ink hover:underline">
+          {user.email}
+        </a>
         <button
           type="button"
           className="text-ink-faint underline-offset-4 hover:text-ink hover:underline"

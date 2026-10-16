@@ -73,6 +73,46 @@ export const serverEnv = {
     const { publicKey, privateKey } = serverEnv.vapid;
     return publicKey !== '' && privateKey !== '';
   },
+  /**
+   * Gate analysis behind the trial/subscription. Off by default so local
+   * development and a deployment without Play billing configured are not
+   * locked out once the trial ends.
+   */
+  get billingEnabled() {
+    return flag('BILLING_ENABLED', false);
+  },
+  /** Google Play: the Android app (TWA) and its subscription product. */
+  get play() {
+    return {
+      packageName: optional('GOOGLE_PLAY_PACKAGE_NAME', ''),
+      subscriptionId: optional('GOOGLE_PLAY_SUBSCRIPTION_ID', 'caldrop_monthly'),
+      /** Service account key JSON, raw or base64. Needs Play Console financial access. */
+      serviceAccount: optional('GOOGLE_PLAY_SERVICE_ACCOUNT', ''),
+      /** Shared secret on the Pub/Sub push URL for real-time developer notifications. */
+      notificationSecret: optional('GOOGLE_PLAY_RTDN_SECRET', ''),
+      /** SHA-256 signing certificate fingerprints, comma separated, for assetlinks.json. */
+      certFingerprints: optional('ANDROID_CERT_FINGERPRINTS', '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    };
+  },
+  get playBillingConfigured() {
+    const { packageName, serviceAccount } = serverEnv.play;
+    return packageName !== '' && serviceAccount !== '';
+  },
+  /**
+   * Who runs the service, shown on the privacy policy. Kept out of the repo
+   * because for an individual operator these are personal details.
+   */
+  get legal() {
+    return {
+      operatorName: optional('OPERATOR_NAME', ''),
+      contactEmail: optional('PRIVACY_CONTACT_EMAIL', ''),
+      /** Where the Supabase project lives, e.g. "대한민국 (서울)". */
+      databaseRegion: optional('DATABASE_REGION', ''),
+    };
+  },
   get enableDelete() {
     return flag('ENABLE_DELETE', false);
   },

@@ -15,7 +15,9 @@ Text / screenshot / PDF  ->  AI analysis  ->  Preview  ->  You confirm  ->  Goog
 ## What it does
 
 - **Google sign-in** with Calendar access (OAuth 2.0, offline access).
-- **Text, screenshot or PDF input** - drag, paste, or type.
+- **Text, screenshot, PDF or voice input** - drag, paste, type, or record a
+  hold the mic button and speak. Dictation uses the browser's own speech
+  recognition, fills the text box for review, and sends no audio to CalDrop.
 - **A whole syllabus at once.** A PDF that carries several commitments produces
   one proposal per commitment (`CREATE_MANY`, up to 20); you tick the ones you
   want. A fixed weekly pattern becomes a single repeating event, not 15 copies.
@@ -257,6 +259,12 @@ npm run build
 | `ENABLE_DELETE` | no | Server-side kill switch, default `false` |
 | `NEXT_PUBLIC_ENABLE_DELETE` | no | UI hint only - the server flag is authoritative |
 | `DEFAULT_TIMEZONE` | no | Default `Asia/Seoul` |
+| `BILLING_ENABLED` | no | Gate analysis behind trial/subscription, default `false` |
+| `GOOGLE_PLAY_PACKAGE_NAME` | for billing | Android (TWA) package name |
+| `GOOGLE_PLAY_SUBSCRIPTION_ID` | no | Default `caldrop_monthly` |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT` | for billing | Service account key JSON (raw or base64), server only |
+| `GOOGLE_PLAY_RTDN_SECRET` | for billing | Secret on the Pub/Sub push URL |
+| `ANDROID_CERT_FINGERPRINTS` | for the app | App signing SHA-256, comma separated |
 
 ---
 
@@ -303,6 +311,22 @@ It skips itself without a key. Screenshot cases run only if you add fixtures at
 
 `/api/ai/analyze` runs on the Node.js runtime with `maxDuration = 60`, which
 covers two model calls plus a calendar lookup.
+
+---
+
+## Billing
+
+Every account gets a 7-day free trial from its first sign-in (`users.trial_ends_at`),
+then needs a ₩700/month Google Play subscription. Purchases happen only inside
+the Play Store app (a Trusted Web Activity with Play Billing enabled) through the
+Digital Goods API; the server verifies each purchase token with the Play
+Developer API, ties it to exactly one account, and acknowledges it. Renewals are
+picked up by re-reading stale subscriptions on demand; real-time developer
+notifications (`/api/billing/play/notify`) make cancellations and refunds take
+effect promptly. Nothing is gated until `BILLING_ENABLED=true`.
+
+Create the Play subscription **without** a Play free-trial offer - the trial is
+the app's own, so a Play trial on top would double it.
 
 ---
 

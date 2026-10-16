@@ -73,3 +73,17 @@ export interface ConfirmResponse {
   /** Non-empty when part of a multi-event proposal failed; the rest was still written. */
   failures: ConfirmFailure[];
 }
+
+/** Where a user stands: inside the free trial, paying, or neither. */
+export type PlanStatus = 'trial' | 'active' | 'expired';
+
+export interface BillingStatus {
+  status: PlanStatus;
+  trialEndsAt: string;
+  /** End of the current paid period, when there is one. */
+  activeUntil: string | null;
+  /** False while billing is switched off for this deployment: nothing is gated. */
+  enforced: boolean;
+  /** Google Play subscription product id to offer, when Play billing is configured. */
+  productId: string | null;
+}

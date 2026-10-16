@@ -2,7 +2,7 @@
  * Browser-side API helpers. Client code only ever talks to our own routes -
  * it has no OpenAI key and no Google token, by construction.
  */
-import type { AnalyzeResponse, BackgroundResponse, ConfirmResponse } from '@/types';
+import type { AnalyzeResponse, BackgroundResponse, BillingStatus, ConfirmResponse } from '@/types';
 
 interface ApiErrorBody {
   error?: { code?: string; message?: string };
@@ -100,4 +100,19 @@ export async function discard(requestId: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ requestId, decision: 'discard' }),
   });
+}
+
+export async function getBillingStatus(): Promise<BillingStatus> {
+  return parse<BillingStatus>(await fetch('/api/billing/status', { cache: 'no-store' }));
+}
+
+/** Hands a Google Play purchase token to the server, which checks it with Play. */
+export async function verifyPlayPurchase(purchaseToken: string): Promise<BillingStatus> {
+  return parse<BillingStatus>(
+    await fetch('/api/billing/play/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchaseToken }),
+    }),
+  );
 }
