@@ -17,8 +17,8 @@ Text / screenshot / PDF  ->  AI analysis  ->  Preview  ->  You confirm  ->  Goog
 *Last updated 2026-10-17.*
 
 **Target:** Google Play (Android app as a Trusted Web Activity), **US store
-only**, plus the plain web app. A **14-day free trial**, then a **$1.99
-Google Play purchase**.
+only**, plus the plain web app. A **14-day free trial**, then a **$1.99/month
+Google Play subscription**.
 
 ### Done
 - [x] Text, screenshot and PDF input; multi-event proposals; repeating events
@@ -33,9 +33,9 @@ removed from `main` before commit, pending a decision. It is parked on the
 **`billing-wip`** branch (not for merging as is). About 70-80% of it carries
 over to the plan below.
 
-**Decisions open**
-- [ ] $1.99 **monthly subscription** (recommended: every use costs OpenAI
-      tokens) or a **one-time** purchase
+**Decisions**
+- [x] **Monthly subscription** at $1.99 (decided 2026-10-17), not a one-time
+      purchase: every use costs OpenAI tokens
 - [ ] What web users outside the Play app do after the trial. Recommended:
       Play only at first ("subscribe in the Android app"); a web merchant of
       record (Paddle / Lemon Squeezy) later. Stripe does not onboard Korean
@@ -58,7 +58,7 @@ Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds updat
 **Code checklist**
 - [ ] Bring the billing code over from `billing-wip`
 - [ ] Trial 7 -> 14 days (`users.trial_ends_at` default)
-- [ ] Product id / base plan for $1.99 (one-time instead -> switch to the products API)
+- [ ] Product id / monthly base plan for $1.99
 - [ ] English copy for the plan card and `/account`: trial end, renewal period, how to cancel
 - [ ] English privacy policy (required for the US listing)
 - [ ] Tests for entitlement, verify and RTDN
@@ -86,7 +86,7 @@ Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds updat
       as a redirect URI, or the account added as a test user.
 
 ### Order
-1. Settle the two open decisions
+1. Settle how web users pay (subscription model: done)
 2. Restore and adapt billing behind `BILLING_ENABLED=false`
 3. Play Console setup, OAuth verification and the closed test, in parallel
 4. Test purchase, cancel and refund with license testers
