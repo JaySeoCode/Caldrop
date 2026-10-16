@@ -12,12 +12,95 @@ Text / screenshot / PDF  ->  AI analysis  ->  Preview  ->  You confirm  ->  Goog
 
 ---
 
+## Project status
+
+*Last updated 2026-10-17.*
+
+**Target:** Google Play (Android app as a Trusted Web Activity), **US store
+only**, plus the plain web app. A **14-day free trial**, then a **$1.99
+Google Play purchase**.
+
+### Done
+- [x] Text, screenshot and PDF input; multi-event proposals; repeating events
+- [x] Background analysis with a push notification and Undo
+- [x] Hold-to-talk dictation (browser Web Speech API, no audio sent to the server)
+- [x] Account deletion (`/account`), privacy policy (`/privacy`, Korean only)
+- [x] `/.well-known/assetlinks.json` for the TWA
+
+### In progress: billing (not started in code)
+A first billing implementation (7-day trial, ₩700/month) was written and then
+removed from the tree before commit, pending a decision. It is kept in a
+**local git stash** on the developer's machine ("backup: full working tree
+before removing billing (2026-10-17)"), not on GitHub. About 70-80% of it
+carries over to the plan below.
+
+**Decisions open**
+- [ ] $1.99 **monthly subscription** (recommended: every use costs OpenAI
+      tokens) or a **one-time** purchase
+- [ ] What web users outside the Play app do after the trial. Recommended:
+      Play only at first ("subscribe in the Android app"); a web merchant of
+      record (Paddle / Lemon Squeezy) later. Stripe does not onboard Korean
+      sellers. Entitlement is tied to the account, not the payment source.
+
+**Design**
+```
+TWA app  -> Digital Goods API (price) -> Play purchase sheet -> purchase token
+         -> POST /api/billing/play/verify -> Play Developer API verify + acknowledge -> DB
+Analyze  -> server checks: inside trial, or a valid purchase? otherwise 402
+Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds update the cache
+```
+- The trial is the app's own: 14 days from first sign-in, no card. Deleting
+  the account and signing up again does not restart it.
+- **No Play free-trial offer** on the product: it would need a card and would
+  stack on top of the app's trial.
+- The price comes from Play (Digital Goods API), never hard-coded.
+- Gated by `BILLING_ENABLED` (default `false`) until purchases are tested.
+
+**Code checklist**
+- [ ] Restore the stashed billing code
+- [ ] Trial 7 -> 14 days (`users.trial_ends_at` default)
+- [ ] Product id / base plan for $1.99 (one-time instead -> switch to the products API)
+- [ ] English copy for the plan card and `/account`: trial end, renewal period, how to cancel
+- [ ] English privacy policy (required for the US listing)
+- [ ] Tests for entitlement, verify and RTDN
+
+**Play Console / outside the code**
+- [ ] Personal developer account ($25, identity verification). New personal
+      accounts need a **closed test with 12+ testers for 14 days** before
+      production: this is the longest lead time.
+- [ ] Payments profile: payout account, US tax info (W-8BEN). Google collects
+      US sales tax. Check Korean tax / business registration with an accountant.
+- [ ] Subscription product (e.g. `caldrop_monthly`), $1.99 monthly base plan
+- [ ] Country availability: United States only
+- [ ] Service account with financial permissions; Pub/Sub topic for RTDN
+- [ ] TWA build (Bubblewrap) with Play Billing enabled; signing SHA-256 in
+      `ANDROID_CERT_FINGERPRINTS`
+- [ ] License testers for test purchases
+- Expected payout: Play takes 15% on subscriptions, about $1.69 of $1.99.
+
+### Launch blockers outside billing
+- [ ] **Google OAuth verification.** Calendar scopes are sensitive: until the
+      app is verified, users see an "unverified app" screen, sign-ins are capped
+      at 100 users, and in Testing mode refresh tokens expire after 7 days.
+      Verification can take weeks, so apply alongside the billing work. Local
+      sign-in also needs `http://localhost:3000/api/auth/callback` registered
+      as a redirect URI, or the account added as a test user.
+
+### Order
+1. Settle the two open decisions
+2. Restore and adapt billing behind `BILLING_ENABLED=false`
+3. Play Console setup, OAuth verification and the closed test, in parallel
+4. Test purchase, cancel and refund with license testers
+5. `BILLING_ENABLED=true`, apply for production
+
+---
+
 ## What it does
 
 - **Google sign-in** with Calendar access (OAuth 2.0, offline access).
-- **Text, screenshot, PDF or voice input** - drag, paste, type, or record a
-  hold the mic button and speak. Dictation uses the browser's own speech
-  recognition, fills the text box for review, and sends no audio to CalDrop.
+- **Text, screenshot, PDF or voice input** - drag, paste, type, or hold the
+  mic button and speak. Dictation uses the browser's own speech recognition,
+  fills the text box for review, and sends no audio to CalDrop.
 - **A whole syllabus at once.** A PDF that carries several commitments produces
   one proposal per commitment (`CREATE_MANY`, up to 20); you tick the ones you
   want. A fixed weekly pattern becomes a single repeating event, not 15 copies.
