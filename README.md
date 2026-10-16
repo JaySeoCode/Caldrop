@@ -29,10 +29,9 @@ Google Play purchase**.
 
 ### In progress: billing (not started in code)
 A first billing implementation (7-day trial, ₩700/month) was written and then
-removed from the tree before commit, pending a decision. It is kept in a
-**local git stash** on the developer's machine ("backup: full working tree
-before removing billing (2026-10-17)"), not on GitHub. About 70-80% of it
-carries over to the plan below.
+removed from `main` before commit, pending a decision. It is parked on the
+**`billing-wip`** branch (not for merging as is). About 70-80% of it carries
+over to the plan below.
 
 **Decisions open**
 - [ ] $1.99 **monthly subscription** (recommended: every use costs OpenAI
@@ -57,7 +56,7 @@ Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds updat
 - Gated by `BILLING_ENABLED` (default `false`) until purchases are tested.
 
 **Code checklist**
-- [ ] Restore the stashed billing code
+- [ ] Bring the billing code over from `billing-wip`
 - [ ] Trial 7 -> 14 days (`users.trial_ends_at` default)
 - [ ] Product id / base plan for $1.99 (one-time instead -> switch to the products API)
 - [ ] English copy for the plan card and `/account`: trial end, renewal period, how to cancel
