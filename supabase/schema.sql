@@ -156,8 +156,10 @@ alter table public.users             enable row level security;
 alter table public.google_accounts   enable row level security;
 alter table public.calendar_requests enable row level security;
 alter table public.calendar_actions  enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 revoke all on public.users             from anon, authenticated;
 revoke all on public.google_accounts   from anon, authenticated;
 revoke all on public.calendar_requests from anon, authenticated;
 revoke all on public.calendar_actions  from anon, authenticated;
+revoke all on public.push_subscriptions from anon, authenticated;

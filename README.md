@@ -15,7 +15,9 @@ Text / screenshot / PDF  ->  AI analysis  ->  Preview  ->  You confirm  ->  Goog
 ## What it does
 
 - **Google sign-in** with Calendar access (OAuth 2.0, offline access).
-- **Text, screenshot or PDF input** - drag, paste, or type.
+- **Text, screenshot, PDF or voice input** - drag, paste, type, or record a
+  hold the mic button and speak. Dictation uses the browser's own speech
+  recognition, fills the text box for review, and sends no audio to CalDrop.
 - **A whole syllabus at once.** A PDF that carries several commitments produces
   one proposal per commitment (`CREATE_MANY`, up to 20); you tick the ones you
   want. A fixed weekly pattern becomes a single repeating event, not 15 copies.
@@ -257,6 +259,7 @@ npm run build
 | `ENABLE_DELETE` | no | Server-side kill switch, default `false` |
 | `NEXT_PUBLIC_ENABLE_DELETE` | no | UI hint only - the server flag is authoritative |
 | `DEFAULT_TIMEZONE` | no | Default `Asia/Seoul` |
+| `ANDROID_PACKAGE_NAME` / `ANDROID_CERT_FINGERPRINTS` | for the app | TWA package and signing SHA-256 (comma separated), for assetlinks.json |
 
 ---
 

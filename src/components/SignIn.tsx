@@ -30,6 +30,14 @@ export function SignIn({ authError }: { authError: string | null }) {
       <button type="button" className="btn-primary mt-6 w-full sm:w-auto" onClick={startSignIn}>
         Continue with Google
       </button>
+
+      <p className="mt-4 text-xs text-ink-faint">
+        By continuing you agree to how CalDrop handles your data, described in the{' '}
+        <a href="/privacy" className="underline underline-offset-2">
+          개인정보처리방침
+        </a>
+        .
+      </p>
     </div>
   );
 }

@@ -88,3 +88,15 @@ export async function updateUserTimezone(userId: string, timezone: string): Prom
     throw new AppError('INTERNAL', 'Could not update the timezone.', { cause: error.message });
   }
 }
+
+/**
+ * Removes the user row; every table holding their data references it with
+ * `on delete cascade`, so requests, actions, Google credentials and push
+ * subscriptions go in the same statement.
+ */
+export async function deleteUser(userId: string): Promise<void> {
+  const { error } = await getServiceClient().from('users').delete().eq('id', userId);
+  if (error) {
+    throw new AppError('INTERNAL', 'Could not delete the account.', { cause: error.message });
+  }
+}

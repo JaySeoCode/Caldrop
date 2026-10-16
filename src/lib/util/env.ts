@@ -73,6 +73,29 @@ export const serverEnv = {
     const { publicKey, privateKey } = serverEnv.vapid;
     return publicKey !== '' && privateKey !== '';
   },
+  /** The Android app (Trusted Web Activity) wrapping this site, for assetlinks.json. */
+  get android() {
+    return {
+      packageName: optional('ANDROID_PACKAGE_NAME', ''),
+      /** SHA-256 signing certificate fingerprints, comma separated. */
+      certFingerprints: optional('ANDROID_CERT_FINGERPRINTS', '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    };
+  },
+  /**
+   * Who runs the service, shown on the privacy policy. Kept out of the repo
+   * because for an individual operator these are personal details.
+   */
+  get legal() {
+    return {
+      operatorName: optional('OPERATOR_NAME', ''),
+      contactEmail: optional('PRIVACY_CONTACT_EMAIL', ''),
+      /** Where the Supabase project lives, e.g. "대한민국 (서울)". */
+      databaseRegion: optional('DATABASE_REGION', ''),
+    };
+  },
   get enableDelete() {
     return flag('ENABLE_DELETE', false);
   },
