@@ -6,7 +6,7 @@ import {
 } from '@/lib/auth/google-oauth';
 import { createSessionToken, readAndClearOAuthState, setSessionCookie } from '@/lib/auth/session';
 import { saveRefreshToken } from '@/lib/db/google-accounts';
-import { upsertUserFromGoogle } from '@/lib/db/users';
+import { applyEarlierTrial, upsertUserFromGoogle } from '@/lib/db/users';
 import { safeEqual } from '@/lib/util/crypto';
 import { serverEnv } from '@/lib/util/env';
 
@@ -58,6 +58,8 @@ export async function GET(request: NextRequest) {
       picture: profile.picture,
       timezone: timezoneFromState ?? null,
     });
+    // Deleting the account and signing up again resumes the old trial.
+    await applyEarlierTrial(user.id, profile.sub);
 
     // `prompt=consent` means Google returns a refresh token on every sign-in;
     // if it is ever absent we keep any previously stored one rather than

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ClarificationCard } from '@/components/ClarificationCard';
 import { InputCard } from '@/components/InputCard';
+import { PlanCard } from '@/components/PlanCard';
 import { PreviewCard } from '@/components/PreviewCard';
 import { ResultCard } from '@/components/ResultCard';
 import {
@@ -10,13 +11,14 @@ import {
   analyze,
   confirm,
   discard,
+  getBillingStatus,
   isBackground,
   type ClarificationTurn,
 } from '@/lib/api-client';
 import { NotifyToggle } from '@/components/NotifyToggle';
 import { readPushState, type PushState } from '@/lib/push-client';
 import { takeSharedPayload, type SharedPayload } from '@/lib/shared-inbox';
-import type { AnalyzeResponse, ConfirmResponse } from '@/types';
+import type { AnalyzeResponse, BillingStatus, ConfirmResponse } from '@/types';
 
 type Phase = 'idle' | 'analyzing' | 'preview' | 'confirming' | 'done';
 
@@ -54,8 +56,13 @@ export function Workspace({
   // Set after a hand-off, so the user can see their input was taken.
   const [handedOff, setHandedOff] = useState(0);
 
+  // Trial / subscription. Null until loaded, and stays null if the lookup
+  // fails: the server enforces the plan anyway, this only explains it.
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+
   useEffect(() => {
     void readPushState().then(setPush);
+    void getBillingStatus().then(setBilling, () => undefined);
   }, []);
   // Content that arrived through the Android share sheet, shown in the input card.
   const [shared, setShared] = useState<SharedPayload | null>(null);
@@ -100,6 +107,9 @@ export function Workspace({
         setPhase('preview');
       } catch (cause) {
         setError(cause instanceof ApiError ? cause.message : 'Analysis failed. Please try again.');
+        if (cause instanceof ApiError && cause.code === 'PAYMENT_REQUIRED') {
+          void getBillingStatus().then(setBilling, () => undefined);
+        }
         setPhase('idle');
       }
     },
@@ -155,6 +165,8 @@ export function Workspace({
   }, [analysis, reset]);
 
   const busy = phase === 'analyzing' || phase === 'confirming';
+  // Trial over and nothing paid: the subscribe card takes the input card's place.
+  const locked = billing?.enforced === true && billing.status === 'expired';
   const action = analysis?.action ?? null;
 
   return (
@@ -250,7 +262,11 @@ export function Workspace({
         </p>
       ) : null}
 
-      {phase === 'idle' || phase === 'analyzing' ? (
+      {billing && (phase === 'idle' || phase === 'analyzing') ? (
+        <PlanCard billing={billing} onChange={setBilling} />
+      ) : null}
+
+      {(phase === 'idle' || phase === 'analyzing') && !locked ? (
         <InputCard
           // Remount when a new share arrives so the card shows its content.
           key={shared ? 'shared' : 'empty'}

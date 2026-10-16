@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { waitUntil } from '@vercel/functions';
 import { requireSession } from '@/lib/auth/session';
+import { requireEntitlement } from '@/lib/billing/entitlement';
 import { applyProposal } from '@/lib/calendar/apply';
 import { countSubscriptions } from '@/lib/db/push';
 import { buildNotification } from '@/lib/push/message';
@@ -201,6 +202,7 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireSession();
     consume(`analyze:${session.id}`, RATE_LIMITS.analyze);
+    await requireEntitlement(session.id);
 
     const contentType = request.headers.get('content-type') ?? '';
     let text: string | null = null;

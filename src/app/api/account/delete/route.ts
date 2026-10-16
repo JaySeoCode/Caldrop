@@ -2,8 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { revokeToken } from '@/lib/auth/google-oauth';
 import { invalidateAccessToken } from '@/lib/auth/google-tokens';
 import { clearSessionCookie, requireSession } from '@/lib/auth/session';
+import { cancelSubscription } from '@/lib/billing/google-play';
+import { isRenewing } from '@/lib/billing/plan';
 import { getRefreshToken } from '@/lib/db/google-accounts';
-import { deleteUser, getUserById } from '@/lib/db/users';
+import { listSubscriptions } from '@/lib/db/subscriptions';
+import { deleteUser, getTrialEndsAt, getUserById, rememberDeletedAccount } from '@/lib/db/users';
+import { serverEnv } from '@/lib/util/env';
 import { AppError, toErrorPayload } from '@/lib/util/errors';
 import { consume, RATE_LIMITS } from '@/lib/util/rate-limit';
 
@@ -13,10 +17,10 @@ export const dynamic = 'force-dynamic';
 /**
  * Deletes the signed-in account and everything stored about it.
  *
- * Order matters: revoking Google access reaches outside and runs first as a
- * best effort, because a provider hiccup must not leave the user unable to
- * delete. The database delete is the one step that has to succeed. Events
- * already on the user's Google Calendar are theirs and are left alone.
+ * Order matters: the steps that reach outside (Google OAuth, Google Play) run
+ * first and are best-effort, because a provider hiccup must not leave the user
+ * unable to delete. The database delete is the one step that has to succeed.
+ * Events already on the user's Google Calendar are theirs and are left alone.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -34,12 +38,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // Stop future Play charges for an account that will no longer exist.
+    if (serverEnv.playBillingConfigured) {
+      for (const subscription of await listSubscriptions(user.id)) {
+        if (!isRenewing(subscription)) continue;
+        await cancelSubscription(subscription.productId, subscription.purchaseToken).catch(
+          (error) => console.error('[caldrop] cancel on delete failed', error),
+        );
+      }
+    }
+
     // Revoking the refresh token removes CalDrop from the user's Google
     // account permissions entirely, not just from our database.
     const refreshToken = await getRefreshToken(user.id).catch(() => null);
     if (refreshToken) await revokeToken(refreshToken);
     invalidateAccessToken(user.id);
 
+    await rememberDeletedAccount(user.googleSub, await getTrialEndsAt(user.id));
     await deleteUser(user.id);
     clearSessionCookie();
 

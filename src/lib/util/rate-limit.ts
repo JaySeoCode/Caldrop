@@ -25,6 +25,7 @@ export const RATE_LIMITS = {
   confirm: { limit: 40, windowMs: 60_000 },
   read: { limit: 120, windowMs: 60_000 },
   account: { limit: 20, windowMs: 60_000 },
+  billing: { limit: 20, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 
 export function consume(key: string, rule: RateLimitRule, now = Date.now()): void {

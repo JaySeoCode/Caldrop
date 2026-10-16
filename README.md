@@ -27,19 +27,21 @@ Google Play subscription**.
 - [x] Account deletion (`/account`), privacy policy (`/privacy`, Korean only)
 - [x] `/.well-known/assetlinks.json` for the TWA
 
-### In progress: billing (not started in code)
-A first billing implementation (7-day trial, ₩700/month) was written and then
-removed from `main` before commit, pending a decision. It is parked on the
-**`billing-wip`** branch (not for merging as is). About 70-80% of it carries
-over to the plan below.
+### In progress: billing (code on `main`, switched off)
+The billing code is on `main` behind `BILLING_ENABLED=false`, ported from the
+parked `billing-wip` branch (the earlier 7-day / ₩700 version). Next: Play
+Console setup and test purchases.
 
 **Decisions**
 - [x] **Monthly subscription** at $1.99 (decided 2026-10-17), not a one-time
       purchase: every use costs OpenAI tokens
-- [ ] What web users outside the Play app do after the trial. Recommended:
-      Play only at first ("subscribe in the Android app"); a web merchant of
-      record (Paddle / Lemon Squeezy) later. Stripe does not onboard Korean
-      sellers. Entitlement is tied to the account, not the payment source.
+- [x] **Play only** (decided 2026-10-17). The site stays reachable in any
+      browser (a TWA is the website), but the trial and subscription are
+      checked server-side per Google account, so the web is no way around
+      paying. After the trial, web users are told to subscribe in the Android
+      app; a Play subscriber can then use the web too. A web merchant of record
+      (Paddle / Lemon Squeezy) can come later. Stripe does not onboard Korean
+      sellers.
 
 **Design**
 ```
@@ -52,16 +54,18 @@ Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds updat
   the account and signing up again does not restart it.
 - **No Play free-trial offer** on the product: it would need a card and would
   stack on top of the app's trial.
-- The price comes from Play (Digital Goods API), never hard-coded.
+- The price shown comes from Play (Digital Goods API); `$1.99` is only the
+  fallback text outside the app.
 - Gated by `BILLING_ENABLED` (default `false`) until purchases are tested.
 
 **Code checklist**
-- [ ] Bring the billing code over from `billing-wip`
-- [ ] Trial 7 -> 14 days (`users.trial_ends_at` default)
-- [ ] Product id / monthly base plan for $1.99
-- [ ] English copy for the plan card and `/account`: trial end, renewal period, how to cancel
+- [x] Bring the billing code over from `billing-wip`
+- [x] Trial 7 -> 14 days (`users.trial_ends_at` default)
+- [x] Product id `caldrop_monthly` (`GOOGLE_PLAY_SUBSCRIPTION_ID`), USD price fallback
+- [x] English copy for the plan card and `/account`: trial end, renewal period, how to cancel
 - [ ] English privacy policy (required for the US listing)
-- [ ] Tests for entitlement, verify and RTDN
+- [x] Tests for the plan decision (trial, paid period, cancel, refresh)
+- [ ] Tests for the verify and RTDN routes (need a Play API mock)
 
 **Play Console / outside the code**
 - [ ] Personal developer account ($25, identity verification). New personal
@@ -86,8 +90,8 @@ Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds updat
       as a redirect URI, or the account added as a test user.
 
 ### Order
-1. Settle how web users pay (subscription model: done)
-2. Restore and adapt billing behind `BILLING_ENABLED=false`
+1. ~~Settle the open decisions~~ (done)
+2. ~~Restore and adapt billing behind `BILLING_ENABLED=false`~~ (done)
 3. Play Console setup, OAuth verification and the closed test, in parallel
 4. Test purchase, cancel and refund with license testers
 5. `BILLING_ENABLED=true`, apply for production
@@ -341,7 +345,11 @@ npm run build
 | `ENABLE_DELETE` | no | Server-side kill switch, default `false` |
 | `NEXT_PUBLIC_ENABLE_DELETE` | no | UI hint only - the server flag is authoritative |
 | `DEFAULT_TIMEZONE` | no | Default `Asia/Seoul` |
-| `ANDROID_PACKAGE_NAME` / `ANDROID_CERT_FINGERPRINTS` | for the app | TWA package and signing SHA-256 (comma separated), for assetlinks.json |
+| `ANDROID_PACKAGE_NAME` / `ANDROID_CERT_FINGERPRINTS` | for the app | TWA package and signing SHA-256 (comma separated), for assetlinks.json and Play billing |
+| `BILLING_ENABLED` | no | Gate analysis behind trial/subscription, default `false` |
+| `GOOGLE_PLAY_SUBSCRIPTION_ID` | no | Default `caldrop_monthly` |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT` | for billing | Service account key JSON (raw or base64), server only |
+| `GOOGLE_PLAY_RTDN_SECRET` | for billing | Secret on the Pub/Sub push URL |
 
 ---
 
@@ -388,6 +396,25 @@ It skips itself without a key. Screenshot cases run only if you add fixtures at
 
 `/api/ai/analyze` runs on the Node.js runtime with `maxDuration = 60`, which
 covers two model calls plus a calendar lookup.
+
+---
+
+## Billing
+
+Every account gets a 14-day free trial from its first sign-in
+(`users.trial_ends_at`), then needs a $1.99/month Google Play subscription.
+Purchases happen only inside the Play Store app (a Trusted Web Activity with
+Play Billing enabled) through the Digital Goods API; the server verifies each
+purchase token with the Play Developer API, ties it to exactly one account, and
+acknowledges it. Renewals are picked up by re-reading stale subscriptions on
+demand; real-time developer notifications (`/api/billing/play/notify`) make
+cancellations and refunds take effect promptly. Deleting the account cancels a
+renewing subscription and keeps only a keyed hash of the Google id for a year,
+so signing up again does not restart the trial. Nothing is gated until
+`BILLING_ENABLED=true`.
+
+Create the Play subscription **without** a Play free-trial offer - the trial is
+the app's own, so a Play trial on top would double it.
 
 ---
 

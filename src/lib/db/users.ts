@@ -1,4 +1,5 @@
 import 'server-only';
+import { createHmac } from 'node:crypto';
 import { getServiceClient } from '@/lib/db/supabase';
 import { AppError } from '@/lib/util/errors';
 import { isValidTimeZone } from '@/lib/util/datetime';
@@ -89,9 +90,71 @@ export async function updateUserTimezone(userId: string, timezone: string): Prom
   }
 }
 
+/** End of this account's free trial, set by the database when the user first signs in. */
+export async function getTrialEndsAt(userId: string): Promise<string> {
+  const { data, error } = await getServiceClient()
+    .from('users')
+    .select('trial_ends_at')
+    .eq('id', userId)
+    .single<{ trial_ends_at: string }>();
+  if (error || !data) {
+    throw new AppError('INTERNAL', 'Could not load the plan.', { cause: error?.message });
+  }
+  return data.trial_ends_at;
+}
+
+/**
+ * A deleted account leaves behind one row: a keyed hash of its Google id and
+ * when its trial ended. Signing up again with the same Google account then
+ * resumes that trial instead of starting a fresh one. Nothing else survives,
+ * and the row itself is dropped after a year.
+ */
+const DELETED_ACCOUNT_RETENTION_MS = 365 * 86_400_000;
+
+function googleSubHash(googleSub: string): string {
+  return createHmac('sha256', serverEnv.tokenEncryptionKey)
+    .update(`deleted-account:${googleSub}`)
+    .digest('hex');
+}
+
+export async function rememberDeletedAccount(googleSub: string, trialEndsAt: string): Promise<void> {
+  const supabase = getServiceClient();
+  const { error } = await supabase
+    .from('deleted_accounts')
+    .upsert(
+      { google_sub_hash: googleSubHash(googleSub), trial_ends_at: trialEndsAt, deleted_at: new Date().toISOString() },
+      { onConflict: 'google_sub_hash' },
+    );
+  if (error) {
+    throw new AppError('INTERNAL', 'Could not delete the account.', { cause: error.message });
+  }
+  // Opportunistic purge: the retention promise is kept without a cron job.
+  await supabase
+    .from('deleted_accounts')
+    .delete()
+    .lt('deleted_at', new Date(Date.now() - DELETED_ACCOUNT_RETENTION_MS).toISOString());
+}
+
+/** Called on every sign-in: never lets re-registering extend a trial. Idempotent. */
+export async function applyEarlierTrial(userId: string, googleSub: string): Promise<void> {
+  const supabase = getServiceClient();
+  const { data } = await supabase
+    .from('deleted_accounts')
+    .select('trial_ends_at')
+    .eq('google_sub_hash', googleSubHash(googleSub))
+    .gt('deleted_at', new Date(Date.now() - DELETED_ACCOUNT_RETENTION_MS).toISOString())
+    .maybeSingle<{ trial_ends_at: string }>();
+  if (!data) return;
+  await supabase
+    .from('users')
+    .update({ trial_ends_at: data.trial_ends_at })
+    .eq('id', userId)
+    .gt('trial_ends_at', data.trial_ends_at);
+}
+
 /**
  * Removes the user row; every table holding their data references it with
- * `on delete cascade`, so requests, actions, Google credentials and push
+ * `on delete cascade`, so requests, actions, Google credentials, push and Play
  * subscriptions go in the same statement.
  */
 export async function deleteUser(userId: string): Promise<void> {

@@ -73,6 +73,29 @@ export const serverEnv = {
     const { publicKey, privateKey } = serverEnv.vapid;
     return publicKey !== '' && privateKey !== '';
   },
+  /**
+   * Gate analysis behind the trial/subscription. Off by default so local
+   * development and a deployment without Play billing configured are not
+   * locked out once the trial ends.
+   */
+  get billingEnabled() {
+    return flag('BILLING_ENABLED', false);
+  },
+  /** Google Play Billing for the Android app. The package name is `android.packageName`. */
+  get play() {
+    return {
+      packageName: serverEnv.android.packageName,
+      subscriptionId: optional('GOOGLE_PLAY_SUBSCRIPTION_ID', 'caldrop_monthly'),
+      /** Service account key JSON, raw or base64. Needs Play Console financial access. */
+      serviceAccount: optional('GOOGLE_PLAY_SERVICE_ACCOUNT', ''),
+      /** Shared secret on the Pub/Sub push URL for real-time developer notifications. */
+      notificationSecret: optional('GOOGLE_PLAY_RTDN_SECRET', ''),
+    };
+  },
+  get playBillingConfigured() {
+    const { packageName, serviceAccount } = serverEnv.play;
+    return packageName !== '' && serviceAccount !== '';
+  },
   /** The Android app (Trusted Web Activity) wrapping this site, for assetlinks.json. */
   get android() {
     return {

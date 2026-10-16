@@ -36,7 +36,7 @@ export function SignIn({ authError }: { authError: string | null }) {
         <a href="/privacy" className="underline underline-offset-2">
           개인정보처리방침
         </a>
-        .
+        . New accounts get a 14-day free trial.
       </p>
     </div>
   );
