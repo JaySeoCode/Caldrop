@@ -24,7 +24,7 @@ Google Play subscription**.
 - [x] Text, screenshot and PDF input; multi-event proposals; repeating events
 - [x] Background analysis with a push notification and Undo
 - [x] Hold-to-talk dictation (browser Web Speech API, no audio sent to the server)
-- [x] Account deletion (`/account`), privacy policy (`/privacy`, Korean only)
+- [x] Account deletion (`/account`), privacy policy (`/privacy` English, linked from the Play listing; `/privacy/ko` Korean)
 - [x] `/.well-known/assetlinks.json` for the TWA
 
 ### In progress: billing (code on `main`, switched off)
@@ -63,7 +63,7 @@ Play RTDN (Pub/Sub) -> /api/billing/play/notify -> cancellations / refunds updat
 - [x] Trial 7 -> 14 days (`users.trial_ends_at` default)
 - [x] Product id `caldrop_monthly` (`GOOGLE_PLAY_SUBSCRIPTION_ID`), USD price fallback
 - [x] English copy for the plan card and `/account`: trial end, renewal period, how to cancel
-- [ ] English privacy policy (required for the US listing)
+- [x] English privacy policy at `/privacy` (Korean moved to `/privacy/ko`)
 - [x] Tests for the plan decision (trial, paid period, cancel, refresh)
 - [ ] Tests for the verify and RTDN routes (need a Play API mock)
 

@@ -117,6 +117,8 @@ export const serverEnv = {
       contactEmail: optional('PRIVACY_CONTACT_EMAIL', ''),
       /** Where the Supabase project lives, e.g. "대한민국 (서울)". */
       databaseRegion: optional('DATABASE_REGION', ''),
+      /** The same in English for /privacy, e.g. "South Korea (Seoul)". */
+      databaseRegionEn: optional('DATABASE_REGION_EN', ''),
     };
   },
   get enableDelete() {

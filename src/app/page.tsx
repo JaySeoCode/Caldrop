@@ -38,7 +38,7 @@ export default async function HomePage({
 
       <footer className="mt-auto flex justify-center gap-4 pt-16 text-xs text-ink-faint">
         <Link href="/privacy" className="hover:text-ink">
-          개인정보처리방침
+          Privacy Policy
         </Link>
         <Link href="/account" className="hover:text-ink">
           Account
