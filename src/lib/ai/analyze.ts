@@ -15,9 +15,16 @@ import {
 import { intentExtractionSchema, INTENT_SCHEMA_NAME, intentJsonSchema } from '@/schemas/intent';
 import { CALENDAR_ACTION_SCHEMA_NAME, calendarActionJsonSchema } from '@/schemas/calendar-action';
 import {
+  ORIENTATION_SCHEMA_NAME,
+  orientationJsonSchema,
+  orientationSchema,
+  type TextTop,
+} from '@/schemas/orientation';
+import {
   decisionSystemPrompt,
   decisionUserPrompt,
   intentSystemPrompt,
+  orientationSystemPrompt,
   renderClarifications,
   renderRecentEvent,
   wrapUntrusted,
@@ -35,6 +42,14 @@ export interface CalendarPort {
     keywords?: string[];
   }): Promise<CalendarEvent[]>;
   findConflicts(start: string, end: string, excludeEventId?: string): Promise<CalendarEvent[]>;
+}
+
+/** Pixel operations on an uploaded image. Optional: without them the image goes as uploaded. */
+export interface ImageTools {
+  /** Applies EXIF orientation, strips metadata and caps the size. */
+  normalize(image: ImageInput): Promise<ImageInput>;
+  /** Rotates clockwise by the given degrees. */
+  rotate(image: ImageInput, degrees: 90 | 180 | 270): Promise<ImageInput>;
 }
 
 /** One NEED_CLARIFICATION round: what the assistant asked and what the user answered. */
@@ -145,8 +160,50 @@ function describeInput(input: AnalyzeInput): string {
   return parts.join('\n\n');
 }
 
+/**
+ * Turns a photo upright before it is read. A sideways invitation is otherwise
+ * "read" with a confidently invented venue. Best effort: if anything here
+ * fails, the reading goes ahead on the image as uploaded.
+ */
+async function uprightImage(
+  model: StructuredModel,
+  images: ImageTools,
+  image: ImageInput,
+): Promise<ImageInput> {
+  let normalized = image;
+  try {
+    normalized = await images.normalize(image);
+    const first = await textTop(model, normalized);
+    if (first === 'up' || first === null) return normalized;
+    if (first === 'down') return await images.rotate(normalized, 180);
+
+    // Sideways, direction unknown: a quarter turn makes it upright or upside down.
+    const quarter = await images.rotate(normalized, 90);
+    const second = await textTop(model, quarter);
+    if (second === 'up') return quarter;
+    if (second === 'down') return await images.rotate(normalized, 270);
+    return normalized;
+  } catch {
+    return normalized;
+  }
+}
+
+async function textTop(model: StructuredModel, image: ImageInput): Promise<TextTop | null> {
+  const raw = await model.run({
+    instructions: orientationSystemPrompt(),
+    text: 'Report the orientation of the text in this image.',
+    image,
+    imageDetail: 'low',
+    schemaName: ORIENTATION_SCHEMA_NAME,
+    jsonSchema: orientationJsonSchema as unknown as Record<string, unknown>,
+    maxOutputTokens: 50,
+  });
+  const parsed = orientationSchema.safeParse(raw);
+  return parsed.success ? parsed.data.textTop : null;
+}
+
 export async function analyzeInput(
-  deps: { model: StructuredModel; calendar: CalendarPort },
+  deps: { model: StructuredModel; calendar: CalendarPort; images?: ImageTools },
   input: AnalyzeInput,
 ): Promise<AnalyzeOutcome> {
   if (!input.text && !input.image && !input.document) {
@@ -157,11 +214,17 @@ export async function analyzeInput(
   const weekday = weekdayInTimeZone(input.now, input.timeZone);
   const timeContext = { currentDateTime, timeZone: input.timeZone, weekday };
 
+  // ---- Pass 0: turn a photo upright ---------------------------------------
+  const image =
+    input.image && deps.images
+      ? await uprightImage(deps.model, deps.images, input.image)
+      : input.image;
+
   // ---- Pass 1: read the input -------------------------------------------
   const rawIntent = await deps.model.run({
     instructions: intentSystemPrompt(timeContext),
     text: describeInput(input),
-    image: input.image ?? undefined,
+    image: image ?? undefined,
     document: input.document ?? undefined,
     schemaName: INTENT_SCHEMA_NAME,
     jsonSchema: intentJsonSchema as unknown as Record<string, unknown>,

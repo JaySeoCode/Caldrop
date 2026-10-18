@@ -13,6 +13,7 @@ import {
   action,
   event,
   fakeCalendar,
+  fakeImageTools,
   intent,
   scriptedModel,
 } from './fixtures/harness';
@@ -667,5 +668,54 @@ describe('follow-up to the last confirmed change', () => {
     );
 
     expect(outcome.candidates).toHaveLength(1);
+  });
+});
+
+describe('sideways photo -> turned upright before it is read', () => {
+  const read = (orientations: Array<'up' | 'right' | 'down' | 'left'>) => {
+    const model = scriptedModel({ intent: intent(), decision: action(), orientations });
+    const images = fakeImageTools();
+    return analyzeInput(
+      { model, calendar: fakeCalendar(), images },
+      { ...baseInput, image: FAKE_IMAGE },
+    ).then(() => ({ model, images, readImage: model.calls.at(-2)?.image?.dataUrl }));
+  };
+
+  it('reads an upright image as normalized, after one low-detail check', async () => {
+    const { model, images, readImage } = await read(['up']);
+    expect(images.rotations).toEqual([]);
+    expect(readImage).toBe(`${FAKE_IMAGE.dataUrl}#normalized`);
+    expect(model.calls[0]?.imageDetail).toBe('low');
+    expect(model.calls).toHaveLength(3);
+  });
+
+  it('turns an upside-down image half way', async () => {
+    const { readImage } = await read(['down']);
+    expect(readImage).toBe(`${FAKE_IMAGE.dataUrl}#normalized#rot180`);
+  });
+
+  it('turns a sideways image a quarter and keeps it when that is upright', async () => {
+    const { readImage } = await read(['left', 'up']);
+    expect(readImage).toBe(`${FAKE_IMAGE.dataUrl}#normalized#rot90`);
+  });
+
+  it('turns three quarters when a quarter turn comes out upside down', async () => {
+    const { readImage } = await read(['right', 'down']);
+    expect(readImage).toBe(`${FAKE_IMAGE.dataUrl}#normalized#rot270`);
+  });
+
+  it('falls back to the normalized image when the second check is still sideways', async () => {
+    const { readImage } = await read(['left', 'left']);
+    expect(readImage).toBe(`${FAKE_IMAGE.dataUrl}#normalized`);
+  });
+
+  it('reads the image as uploaded when the image tools fail', async () => {
+    const model = scriptedModel({ intent: intent(), decision: action() });
+    const images = fakeImageTools();
+    images.normalize = async () => {
+      throw new Error('corrupt image');
+    };
+    await analyzeInput({ model, calendar: fakeCalendar(), images }, { ...baseInput, image: FAKE_IMAGE });
+    expect(model.calls.at(-2)?.image?.dataUrl).toBe(FAKE_IMAGE.dataUrl);
   });
 });

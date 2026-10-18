@@ -1,7 +1,8 @@
 import { INTENT_SCHEMA_NAME, type IntentExtraction } from '@/schemas/intent';
 import { CALENDAR_ACTION_SCHEMA_NAME, type CalendarAction } from '@/schemas/calendar-action';
 import type { StructuredModel, StructuredRequest } from '@/lib/ai/client';
-import type { CalendarPort } from '@/lib/ai/analyze';
+import { ORIENTATION_SCHEMA_NAME, type TextTop } from '@/schemas/orientation';
+import type { CalendarPort, ImageTools } from '@/lib/ai/analyze';
 import type { CalendarEvent } from '@/types';
 
 /** "now" for every test: Friday 2026-09-18 17:20 in Asia/Seoul. */
@@ -71,8 +72,11 @@ export interface ScriptedModel extends StructuredModel {
 export function scriptedModel(script: {
   intent: IntentExtraction | unknown;
   decision: CalendarAction | unknown;
+  /** Answers to the orientation checks, in order. */
+  orientations?: TextTop[];
 }): ScriptedModel {
   const calls: StructuredRequest[] = [];
+  const orientations = [...(script.orientations ?? [])];
   return {
     name: 'scripted-model',
     calls,
@@ -80,6 +84,9 @@ export function scriptedModel(script: {
       calls.push(request);
       if (request.schemaName === INTENT_SCHEMA_NAME) return script.intent;
       if (request.schemaName === CALENDAR_ACTION_SCHEMA_NAME) return script.decision;
+      if (request.schemaName === ORIENTATION_SCHEMA_NAME) {
+        return { textTop: orientations.shift() ?? 'up' };
+      }
       throw new Error(`Unexpected schema: ${request.schemaName}`);
     },
   };
@@ -107,6 +114,25 @@ export function fakeCalendar(events: CalendarEvent[] = []): FakeCalendar {
           new Date(candidate.end).getTime() > startMs
         );
       });
+    },
+  };
+}
+
+export interface FakeImageTools extends ImageTools {
+  readonly rotations: number[];
+}
+
+/** Image tools that record rotations and tag the data URL with the total turn. */
+export function fakeImageTools(): FakeImageTools {
+  const rotations: number[] = [];
+  return {
+    rotations,
+    async normalize(image) {
+      return { dataUrl: `${image.dataUrl}#normalized` };
+    },
+    async rotate(image, degrees) {
+      rotations.push(degrees);
+      return { dataUrl: `${image.dataUrl}#rot${degrees}` };
     },
   };
 }

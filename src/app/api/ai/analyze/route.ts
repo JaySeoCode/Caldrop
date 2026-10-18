@@ -8,6 +8,7 @@ import { buildNotification } from '@/lib/push/message';
 import { sendNotification } from '@/lib/push/send';
 import { analyzeInput, type CalendarPort, type RecentEvent } from '@/lib/ai/analyze';
 import { createOpenAIModel } from '@/lib/ai/client';
+import { sharpImageTools } from '@/lib/ai/image';
 import { calendarContextFor } from '@/lib/calendar/context';
 import {
   findCandidateEvents,
@@ -122,7 +123,7 @@ async function runInBackground(job: {
   const { session, requestId, ctx, calendar, input } = job;
   try {
     const outcome = await analyzeInput(
-      { model: createOpenAIModel(), calendar },
+      { model: createOpenAIModel(), calendar, images: sharpImageTools },
       {
         ...input,
         timeZone: session.timeZone,
@@ -295,7 +296,7 @@ export async function POST(request: NextRequest) {
     }
 
     const outcome = await analyzeInput(
-      { model: createOpenAIModel(), calendar },
+      { model: createOpenAIModel(), calendar, images: sharpImageTools },
       {
         text,
         image: image ? { dataUrl: image.dataUrl } : null,

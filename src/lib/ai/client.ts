@@ -27,6 +27,8 @@ export interface StructuredRequest {
   /** User-role content. Untrusted; always delimited by the caller. */
   text: string;
   image?: ImageInput;
+  /** "low" is enough to judge layout; reading text needs "high" (the default). */
+  imageDetail?: 'low' | 'high';
   document?: DocumentInput;
   schemaName: string;
   jsonSchema: Record<string, unknown>;
@@ -86,7 +88,7 @@ function toAiError(error: unknown): AppError {
 
 type UserContent =
   | { type: 'input_text'; text: string }
-  | { type: 'input_image'; image_url: string; detail: 'auto' }
+  | { type: 'input_image'; image_url: string; detail: 'low' | 'high' }
   | { type: 'input_file'; filename: string; file_data: string };
 
 export function createOpenAIModel(model = serverEnv.openaiModel): StructuredModel {
@@ -95,7 +97,12 @@ export function createOpenAIModel(model = serverEnv.openaiModel): StructuredMode
     async run(request: StructuredRequest): Promise<unknown> {
       const content: UserContent[] = [{ type: 'input_text', text: request.text }];
       if (request.image) {
-        content.push({ type: 'input_image', image_url: request.image.dataUrl, detail: 'auto' });
+        content.push({
+          type: 'input_image',
+          image_url: request.image.dataUrl,
+          // Small print (an address on an invitation) is lost at lower detail.
+          detail: request.imageDetail ?? 'high',
+        });
       }
       if (request.document) {
         content.push({
