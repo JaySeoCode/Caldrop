@@ -424,3 +424,15 @@ Recurring events, inviting attendees, choosing among multiple calendars,
 natural-language recurrence ("every Tuesday"), and persisting uploaded
 screenshots. The DELETE path exists in the schema, the API and the calendar
 module; turn it on with `ENABLE_DELETE=true` once you want the UI for it.
+
+
+
+## License
+
+Copyright (c) 2026 [JaySeoCode]
+
+All Rights Reserved.
+
+No permission is granted to use, copy, modify, distribute,
+or sublicense any part of this project without prior
+written permission from the copyright holder.
